@@ -1,0 +1,112 @@
+MOD	世界元素	406/worldgen	item
+MOD	生物群系	407/	nested
+MOD	维度	410/	nested
+MOD	矿物与资源	408/	nested
+MOD	天然结构	409/	nested
+MOD	科技	412/technology	item
+MOD	管道与物流	415/	nested
+MOD	自动化	4843/	nested
+MOD	能源	417/	nested
+MOD	红石	4558/	nested
+MOD	食物与烹饪	436/food	item
+MOD	农业	416/	nested
+MOD	游戏机制	/game-mechanics	item
+MOD	运输	414/transportation	item
+MOD	仓储	420/storage	item
+MOD	魔法	419/magic	item
+MOD	冒险	422/adventure	item
+MOD	装饰	424/decoration	item
+MOD	生物	411/mobs	item
+MOD	实用	5191/utility	item
+MOD	装备与工具	434/equipment	item
+MOD	创造模式	9026/	item
+MOD	性能优化	6814/optimization	item
+MOD	信息显示	423/	item
+MOD	服务器	435/social	item
+MOD	支持库	421/library	item
+MODPACK	多人	4484/	item
+MODPACK	性能优化	/optimization	item
+MODPACK	硬核	4479/challenging	item
+MODPACK	战斗	4483/combat	item
+MODPACK	任务	4478/quests	item
+MODPACK	科技	4472/technology	item
+MODPACK	魔法	4473/magic	item
+MODPACK	冒险	4475/adventure	item
+MODPACK	水槽包	/kitchen-sink	item
+MODPACK	探索	4476/	item
+MODPACK	小游戏	4477/	item
+MODPACK	科幻	4474/	item
+MODPACK	空岛	4736/	item
+MODPACK	原版改良	5128/	item
+MODPACK	FTB	4487/	item
+MODPACK	基于地图	4480/	item
+MODPACK	轻量整合	4481/lightweight	item
+MODPACK	大型整合	4482/	item
+DATAPACK	世界元素	/worldgen	item
+DATAPACK	科技	6951/technology	item
+DATAPACK	游戏机制	/game-mechanics	item
+DATAPACK	运输	/transportation	item
+DATAPACK	仓储	/storage	item
+DATAPACK	魔法	6952/magic	item
+DATAPACK	冒险	6948/adventure	item
+DATAPACK	幻想	6949/	item
+DATAPACK	装饰	/decoration	item
+DATAPACK	生物	/mobs	item
+DATAPACK	实用	6953/utility	item
+DATAPACK	装备与工具	/equipment	item
+DATAPACK	性能优化	/optimization	item
+DATAPACK	服务器	/social	item
+DATAPACK	支持库	6950/library	item
+DATAPACK	Mod 相关	6946/	item
+RESOURCEPACK	风格		header
+RESOURCEPACK	原版风	403/vanilla-like	nested
+RESOURCEPACK	写实风	400/realistic	nested
+RESOURCEPACK	现代风	401/	nested
+RESOURCEPACK	中世纪	402/	nested
+RESOURCEPACK	蒸汽朋克	399/	nested
+RESOURCEPACK	主题化	/themed	nested
+RESOURCEPACK	简洁	/simplistic	nested
+RESOURCEPACK	装饰	/decoration	nested
+RESOURCEPACK	战斗	/combat	nested
+RESOURCEPACK	实用	/utility	nested
+RESOURCEPACK	改良	/tweaks	nested
+RESOURCEPACK	鬼畜	/cursed	nested
+RESOURCEPACK	特性		header
+RESOURCEPACK	含实体	/entities	nested
+RESOURCEPACK	含声音	/audio	nested
+RESOURCEPACK	含字体	5244/fonts	nested
+RESOURCEPACK	含模型	/models	nested
+RESOURCEPACK	含语言	/locale	nested
+RESOURCEPACK	含 UI	/gui	nested
+RESOURCEPACK	核心着色器	/core-shaders	nested
+RESOURCEPACK	动态效果	404/	nested
+RESOURCEPACK	兼容 Mod	4465/modded	nested
+RESOURCEPACK	分辨率		header
+RESOURCEPACK	8x 或更低	/8x-	nested
+RESOURCEPACK	16x	393/16x	nested
+RESOURCEPACK	32x	394/32x	nested
+RESOURCEPACK	48x	/48x	nested
+RESOURCEPACK	64x	395/64x	nested
+RESOURCEPACK	128x	396/128x	nested
+RESOURCEPACK	256x	397/256x	nested
+RESOURCEPACK	512x 或更高	398/512x+	nested
+SHADER	风格		header
+SHADER	原版风	6555/vanilla-like	nested
+SHADER	幻想风	6554/fantasy	nested
+SHADER	写实风	6553/realistic	nested
+SHADER	半写实风	/semi-realistic	nested
+SHADER	卡通风	/cartoon	nested
+SHADER	特性		header
+SHADER	彩色光照	/colored-lighting	nested
+SHADER	路径追踪	/path-tracing	nested
+SHADER	PBR	/pbr	nested
+SHADER	反射	/reflections	nested
+SHADER	性能负荷		header
+SHADER	极低	/potato	nested
+SHADER	低	/low	nested
+SHADER	中	/medium	nested
+SHADER	高	/high	nested
+SHADER	加载器		header
+SHADER	原版可用	/vanilla	nested
+SHADER	Iris	/iris	nested
+SHADER	OptiFine	/optifine	nested
