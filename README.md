@@ -8,7 +8,7 @@ Plain Craft Launcher - New Technology。项目根目录是独立的 JavaFX 启�
 
 「设置 → 启动设置 → 高级选项 → Java 列表」和「版本设置 → 启动选项 → Java」可以直接指定 Java 可执行文件。显式指定的 Java 会被直接用于启动（即使其主版本高于游戏元数据要求，例如用 Java 21 运行 1.20.1），留空时才按版本要求自动匹配；如果指定的路径无效或主版本低于要求，启动时会给出明确的提示。
 
-启动器已内置微软登录的 Client ID `041eb1d3-3069-4594-8044-99c0eec71989`，无需额外配置。如需更换为自己的 Azure 应用，可在启动前设置环境变量 `PCLNT_MICROSOFT_CLIENT_ID`（Azure 应用需允许公共客户端设备代码流）。注意：新建的 Azure 应用还需要通过 Mojang 的 [Minecraft Java App ID 审核](https://aka.ms/mce-reviewappid) 才能调用 Minecraft 登录接口；未获批准时 `login_with_xbox` 会返回 HTTP 403 `Invalid app registration`，此时启动器会显示审核提示和链接。如果 403 响应为 `The request is blocked`，则是当前 IP/代理被拦截，请关闭或更换 VPN、加速器节点后重试。
+启动器已内置微软登录的 Client ID，无需额外配置。如需更换为自己的 Azure 应用，可在启动前设置环境变量 `PCLNT_MICROSOFT_CLIENT_ID`（Azure 应用需允许公共客户端设备代码流）。注意：新建的 Azure 应用还需要通过 Mojang 的 [Minecraft Java App ID 审核](https://aka.ms/mce-reviewappid) 才能调用 Minecraft 登录接口；未获批准时 `login_with_xbox` 会返回 HTTP 403 `Invalid app registration`，此时启动器会显示审核提示和链接。如果 403 响应为 `The request is blocked`，则是当前 IP/代理被拦截，请关闭或更换 VPN、加速器节点后重试。
 
 ## 在 IntelliJ IDEA 中打开
 
@@ -83,3 +83,9 @@ java -jar PCL-NT-0.1.0-SNAPSHOT-windows-x64.jar
 原版启动器由龙腾猫跃开发，界面使用原版内置的 PCL English 字体、窗口图标、XAML 图形和 Minecraft Steve 预览皮肤。参考源码和使用指南见 [Plain Craft Launcher](https://github.com/Meloong-Git/PCL)。
 
 「更多」图标来自原版 `PageOtherLeft.xaml`，离线帮助来自 PCL 帮助库作者和贡献者编写的 `Resources/Help.zip`。如果本地有 `PCL-2/` 参考源码，可用 `powershell -ExecutionPolicy Bypass -File .\tools\import-more-assets.ps1` 更新这些资源。查看参考源码目录的 `LICENCE` 了解原版使用指南。
+
+QQ交流群/反馈群/内测群：1041410415
+_预计开发个官网，目前还属于新建文件夹阶段_
+
+### 赞助（爱发电）：https://ifdian.net/a/shittimchest
+_(喜欢的话就支持一下吧喵）_
