@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.VBox?>
+
+<StackPane styleClass="window-shell" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="io.pclnt.ui.LauncherController">
+    <fx:define>
+        <ToggleGroup fx:id="navigation"/>
+        <BorderPane fx:id="launchPane" styleClass="launch-pane">
+            <left>
+                <BorderPane fx:id="launchSidebar" styleClass="launch-sidebar"
+                            minWidth="300" prefWidth="300" maxWidth="300">
+                    <center>
+                        <StackPane fx:id="loginHost" styleClass="login-host"/>
+                    </center>
+                    <bottom>
+                        <VBox styleClass="launch-actions" spacing="10">
+                            <Button fx:id="playButton" accessibleText="启动游戏，尚未选择版本"
+                                    disable="true" maxWidth="Infinity" prefHeight="54"
+                                    styleClass="outline-button, accent-button, preview-button" onAction="#playSelectedProfile">
+                                <graphic>
+                                    <VBox alignment="CENTER" spacing="3">
+                                        <Label text="启动游戏" styleClass="launch-text"/>
+                                        <Label fx:id="versionCaption" text="尚未选择版本" styleClass="version-caption"/>
+                                    </VBox>
+                                </graphic>
+                            </Button>
+                            <HBox fx:id="versionButtons" spacing="10">
+                                <Button text="版本选择" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        styleClass="outline-button" onAction="#showInstances"/>
+                                <Button fx:id="versionSettingsButton" text="版本设置" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        styleClass="outline-button, preview-button" disable="true" onAction="#showInstanceSettings"/>
+                            </HBox>
+                        </VBox>
+                    </bottom>
+                </BorderPane>
+            </left>
+            <center><Region styleClass="home-background"/></center>
+        </BorderPane>
+    </fx:define>
+
+    <BorderPane fx:id="frame" styleClass="launcher">
+        <top>
+            <StackPane fx:id="titleBar" styleClass="title-bar">
+                <Label fx:id="brand" text="-NT" accessibleText="PCL-NT" styleClass="brand-name"
+                       mouseTransparent="true" snapToPixel="false"
+                       StackPane.alignment="CENTER_LEFT"/>
+                <HBox fx:id="titleNavigation" alignment="CENTER" spacing="10" maxWidth="-Infinity" translateX="-3">
+                    <ToggleButton fx:id="launchTab" text="启动" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showLaunch"/>
+                    <ToggleButton fx:id="downloadTab" text="下载" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showDownloads"/>
+                    <ToggleButton fx:id="multiplayerTab" text="联机" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showMultiplayer"/>
+                    <ToggleButton fx:id="serverTab" text="开服" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showServers"/>
+                    <ToggleButton fx:id="settingsTab" text="设置" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showSettings"/>
+                    <ToggleButton fx:id="toolsTab" text="工具" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showTools"/>
+                    <ToggleButton fx:id="moreTab" text="更多" toggleGroup="$navigation"
+                                  styleClass="title-pill" onAction="#showMore"/>
+                </HBox>
+                <HBox alignment="CENTER_RIGHT" spacing="4" maxWidth="-Infinity"
+                      StackPane.alignment="CENTER_RIGHT">
+                    <Button fx:id="notificationButton" accessibleText="通知中心" styleClass="window-button"/>
+                    <Button fx:id="minimizeButton" accessibleText="最小化" styleClass="window-button" onAction="#minimize"/>
+                    <Button fx:id="closeButton" accessibleText="关闭" styleClass="window-button, close-button" onAction="#close"/>
+                </HBox>
+            </StackPane>
+        </top>
+        <center><StackPane fx:id="pageHost" styleClass="page-host"/></center>
+    </BorderPane>
+</StackPane>
