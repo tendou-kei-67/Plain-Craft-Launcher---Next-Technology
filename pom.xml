@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.pclnt</groupId>
     <artifactId>pcl-nt</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.0.1-Alpha</version>
     <name>PCL-NT</name>
     <description>Plain Craft Launcher - New Technology</description>
 
