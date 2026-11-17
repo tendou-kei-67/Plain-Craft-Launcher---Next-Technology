@@ -5,7 +5,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.WatchKey;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.time.ZoneId;
@@ -15,13 +17,17 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import javafx.animation.PauseTransition;
 import javafx.application.HostServices;
+import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.concurrent.Task;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
@@ -34,16 +40,21 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Rectangle;
+import javafx.util.Duration;
 
 import static io.pclnt.ui.LauncherController.content;
 import static io.pclnt.ui.LauncherController.label;
 import static io.pclnt.ui.TaskMonitor.iconButton;
 import static io.pclnt.ui.VanillaDownloadPage.button;
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
+import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
 
 final class InstanceSavesPage {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy/M/d").withZone(ZoneId.systemDefault());
     private static final String COPY_PREFIX = ".pcl-nt-save-copy-";
+    private static final System.Logger LOG = System.getLogger(InstanceSavesPage.class.getName());
     private record Save(Path directory, FileTime created, FileTime modified) {
         String name() { return directory.getFileName().toString(); }
         String dates() {
@@ -61,19 +72,39 @@ final class InstanceSavesPage {
     private final Callable<Boolean> supportsQuickPlay;
     private final Consumer<String> quickPlay;
     private final Consumer<Node> show;
+    private final Consumer<Path> browseDatapacks;
+    private final InstanceResourcesPage.DatapackServices datapackServices;
+    private final java.util.function.BiConsumer<Path, io.pclnt.minecraft.CommunityResources.Project> browseDatapackProject;
     private final TextField search = new TextField();
     private final VBox rows = new VBox(3);
     private final PclCard list = PclCard.fixed("存档列表", rows);
     private final SimpleBooleanProperty working = new SimpleBooleanProperty();
+    private final PauseTransition watchRefresh = new PauseTransition(Duration.millis(100));
     private List<Save> saves = List.of();
     private boolean quickPlayEnabled;
     private Comparator<Save> order = Comparator.comparing(Save::name, String.CASE_INSENSITIVE_ORDER);
     private Task<Snapshot> scan;
+    private Thread watcher;
     private Node view;
 
     InstanceSavesPage(Path instance, Path gameDirectory, HostServices links, Notifications notifications,
                       BooleanSupplier instanceBusy, Consumer<Boolean> resourceWrite, Callable<Boolean> supportsQuickPlay,
                       Consumer<String> quickPlay, Consumer<Node> show) {
+        this(instance, gameDirectory, links, notifications, instanceBusy, resourceWrite, supportsQuickPlay, quickPlay, show, null);
+    }
+
+    InstanceSavesPage(Path instance, Path gameDirectory, HostServices links, Notifications notifications,
+                      BooleanSupplier instanceBusy, Consumer<Boolean> resourceWrite, Callable<Boolean> supportsQuickPlay,
+                      Consumer<String> quickPlay, Consumer<Node> show, Consumer<Path> browseDatapacks) {
+        this(instance, gameDirectory, links, notifications, instanceBusy, resourceWrite, supportsQuickPlay,
+                quickPlay, show, browseDatapacks, null, null);
+    }
+
+    InstanceSavesPage(Path instance, Path gameDirectory, HostServices links, Notifications notifications,
+                      BooleanSupplier instanceBusy, Consumer<Boolean> resourceWrite, Callable<Boolean> supportsQuickPlay,
+                      Consumer<String> quickPlay, Consumer<Node> show, Consumer<Path> browseDatapacks,
+                      InstanceResourcesPage.DatapackServices datapackServices,
+                      java.util.function.BiConsumer<Path, io.pclnt.minecraft.CommunityResources.Project> browseDatapackProject) {
         this.instance = instance;
         directory = gameDirectory.resolve("saves");
         this.links = links;
@@ -83,6 +114,9 @@ final class InstanceSavesPage {
         this.supportsQuickPlay = supportsQuickPlay;
         this.quickPlay = quickPlay;
         this.show = show;
+        this.browseDatapacks = browseDatapacks;
+        this.datapackServices = datapackServices;
+        this.browseDatapackProject = browseDatapackProject;
     }
 
     Node view(Runnable download) {
@@ -91,7 +125,8 @@ final class InstanceSavesPage {
         search.getStyleClass().addAll("account-input", "help-search");
         search.textProperty().addListener(ignored -> render());
         var sort = new MenuButton("排序：文件名");
-        sort.getStyleClass().add("account-input");
+        sort.getStyleClass().addAll("account-input", "pcl-icon-text-button");
+        PclButtonSkin.animateStandalone(sort);
         PclArtwork.setIcon(sort, "lucide/arrow-up-down", 14);
         sort.getItems().addAll(sortItem(sort, "文件名", order),
                 sortItem(sort, "创建时间", Comparator.comparing(Save::created).reversed().thenComparing(order)),
@@ -103,12 +138,89 @@ final class InstanceSavesPage {
         paste.disableProperty().bind(working);
         var actions = new FlowPane(10, 8, button("打开存档文件夹", this::openRoot), button("下载新资源", download), paste);
         view = content(search, PclCard.fixed("快捷操作", actions), list);
-        reload();
+        watchRefresh.setOnFinished(event -> reload());
+        view.sceneProperty().addListener((observable, old, scene) -> {
+            stopWatching();
+            if (scene != null) {
+                reload();
+                watcher = Thread.startVirtualThread(this::watchDirectory);
+            }
+        });
         return view;
     }
 
+    private void stopWatching() {
+        if (watcher != null) {
+            watcher.interrupt();
+            watcher = null;
+        }
+        watchRefresh.stop();
+        if (scan != null) {
+            scan.cancel();
+            scan = null;
+        }
+    }
+
+    private void watchDirectory() {
+        var worker = Thread.currentThread();
+        var scheduled = new AtomicBoolean();
+        Runnable changed = () -> {
+            if (!scheduled.compareAndSet(false, true)) return;
+            Platform.runLater(() -> {
+                scheduled.set(false);
+                if (watcher == worker) watchRefresh.playFromStart();
+            });
+        };
+        try {
+            while (!worker.isInterrupted()) {
+                Path parent = watchParent();
+                if (parent == null) return;
+                try (var service = directory.getFileSystem().newWatchService()) {
+                    var ancestorKey = parent.register(service, ENTRY_CREATE, ENTRY_DELETE);
+                    if (!parent.equals(watchParent())) continue;
+                    WatchKey savesKey = null;
+                    if (Files.isDirectory(directory, NOFOLLOW_LINKS)) {
+                        savesKey = directory.register(service, ENTRY_CREATE, ENTRY_DELETE);
+                    }
+                    // Rescan after registration so a change between the initial scan and registration is seen.
+                    changed.run();
+                    boolean rebind = false;
+                    while (!rebind) {
+                        var key = service.take();
+                        for (var event : key.pollEvents()) {
+                            if (event.kind() == OVERFLOW) {
+                                changed.run();
+                                rebind |= key == ancestorKey;
+                            } else if (event.context() instanceof Path name) {
+                                if (key == savesKey && !name.toString().startsWith(COPY_PREFIX)) {
+                                    changed.run();
+                                } else if (key == ancestorKey && directory.startsWith(parent.resolve(name))) {
+                                    rebind = true;
+                                }
+                            }
+                        }
+                        rebind |= !key.reset();
+                    }
+                } catch (NoSuchFileException ignored) {
+                    // A directory moved between the existence check and registration. Resolve its parent again.
+                }
+            }
+        } catch (InterruptedException ignored) {
+            worker.interrupt();
+        } catch (IOException | UnsupportedOperationException failure) {
+            LOG.log(System.Logger.Level.DEBUG, "Cannot watch save directory " + directory, failure);
+        }
+    }
+
+    private Path watchParent() {
+        for (Path path = directory.getParent(); path != null; path = path.getParent()) {
+            if (Files.isDirectory(path, NOFOLLOW_LINKS)) return path;
+        }
+        return null;
+    }
+
     void reload() {
-        if (working.get()) return;
+        if (working.get() || view == null || view.getScene() == null) return;
         if (scan != null) scan.cancel();
         if (saves.isEmpty()) rows.getChildren().setAll(new PclLoading("正在刷新……"));
         var task = new Task<Snapshot>() {
@@ -128,7 +240,7 @@ final class InstanceSavesPage {
                         try {
                             var attributes = Files.readAttributes(path, BasicFileAttributes.class, NOFOLLOW_LINKS);
                             if (attributes.isDirectory()) snapshot.add(new Save(path, attributes.creationTime(), attributes.lastModifiedTime()));
-                        } catch (java.nio.file.NoSuchFileException ignored) {
+                        } catch (NoSuchFileException ignored) {
                             // The game or file manager removed this folder during the scan.
                         }
                     }
@@ -139,6 +251,7 @@ final class InstanceSavesPage {
         scan = task;
         task.setOnSucceeded(event -> {
             if (scan != task) return;
+            scan = null;
             var snapshot = task.getValue();
             saves = snapshot.saves();
             quickPlayEnabled = snapshot.quickPlay();
@@ -146,6 +259,7 @@ final class InstanceSavesPage {
         });
         task.setOnFailed(event -> {
             if (scan != task) return;
+            scan = null;
             rows.getChildren().setAll(label("读取存档列表失败：" + VanillaDownloadPage.message(task.getException()), "card-text"));
         });
         Thread.startVirtualThread(task);
@@ -210,16 +324,24 @@ final class InstanceSavesPage {
     }
 
     private void details(Save save) {
+        details(save, view.getScene().getRoot());
+    }
+
+    private void details(Save save, Parent owner) {
         if (!Files.isDirectory(save.directory(), NOFOLLOW_LINKS)) {
             report("存档文件夹不存在");
-            reload();
+            if (view.getScene() == null) show.accept(view);
+            else reload();
             return;
         }
         var details = new InstanceSaveInfoPage(save.directory(), links, notifications, instanceBusy, resourceWrite);
-        show.accept(details.view(() -> {
-            reload();
-            show.accept(view);
-        }, () -> open(save.directory())));
+        Runnable openDatapacks = browseDatapacks == null ? null : () -> {
+            var page = new InstanceResourcesPage(save.directory(), io.pclnt.minecraft.CommunityResources.Kind.DATAPACK,
+                    owner, links, notifications, instanceBusy, kind -> browseDatapacks.accept(save.directory()), resourceWrite,
+                    datapackServices, browseDatapackProject == null ? null : project -> browseDatapackProject.accept(save.directory(), project));
+            show.accept(page.view(() -> details(save, owner)));
+        };
+        show.accept(details.view(() -> show.accept(view), () -> open(save.directory()), openDatapacks));
     }
 
     private void openRoot() {

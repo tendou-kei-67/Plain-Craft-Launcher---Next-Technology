@@ -25,6 +25,8 @@ final class BedrockDownloadPage {
     private final Button install = button("安装游戏", this::install);
     private final Button store = button("打开 Microsoft Store", this::openStore);
     private final Button refresh = button("刷新", this::refresh);
+    private final javafx.beans.property.StringProperty address = new javafx.beans.property.SimpleStringProperty(
+            BedrockEdition.supported() ? "正在检测……" : "此系统不支持");
     private boolean busy;
 
     BedrockDownloadPage(HostServices links, Notifications notifications, TaskMonitor tasks) {
@@ -53,6 +55,12 @@ final class BedrockDownloadPage {
         return view;
     }
 
+    javafx.beans.value.ObservableStringValue address() { return address; }
+
+    void probeAddress() {
+        if (BedrockEdition.supported()) refresh();
+    }
+
     private void refresh() {
         if (busy) {
             return;
@@ -62,6 +70,8 @@ final class BedrockDownloadPage {
     }
 
     private void display(Optional<BedrockEdition.Installation> result) {
+        address.set(result.map(BedrockEdition.Installation::driveLabel).filter(value -> !value.isBlank())
+                .orElse(result.isPresent() ? "未能读取安装驱动器" : "尚未安装"));
         play.setDisable(result.isEmpty());
         install.setVisible(result.isEmpty());
         status.setText(result.map(game -> "已安装 · " + game.version())

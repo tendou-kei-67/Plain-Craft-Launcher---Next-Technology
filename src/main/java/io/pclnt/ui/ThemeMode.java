@@ -33,7 +33,10 @@ final class ThemeMode {
         options.colorMode.addListener(ignored -> refresh());
         options.lightColor.addListener(ignored -> apply());
         options.darkColor.addListener(ignored -> apply());
-        poll = new Timeline(new KeyFrame(Duration.seconds(3), event -> querySystem()));
+        poll = new Timeline(new KeyFrame(Duration.seconds(3), event -> {
+            if (options.colorMode.get() == 3) apply();
+            else querySystem();
+        }));
         poll.setCycleCount(Timeline.INDEFINITE);
         apply();
     }
@@ -41,7 +44,7 @@ final class ThemeMode {
     void watch(Stage stage) {
         stage.focusedProperty().addListener((observable, old, focused) -> {
             if (focused) {
-                querySystem();
+                refresh();
             }
         });
         stage.addEventHandler(WindowEvent.WINDOW_HIDDEN, event -> {
@@ -57,7 +60,7 @@ final class ThemeMode {
 
     private void refresh() {
         apply();
-        if (options.colorMode.get() == 2 && !closed) {
+        if ((options.colorMode.get() == 2 || options.colorMode.get() == 3) && !closed) {
             querySystem();
             poll.play();
         } else {
@@ -87,7 +90,12 @@ final class ThemeMode {
     }
 
     private void apply() {
-        boolean useDark = options.colorMode.get() == 1 || options.colorMode.get() == 2 && systemDark;
+        boolean useDark = switch (options.colorMode.get()) {
+            case 1 -> true;
+            case 2 -> systemDark;
+            case 3 -> LocalThemeTime.isDark(java.time.ZonedDateTime.now());
+            default -> false;
+        };
         int color = useDark ? options.darkColor.get() : options.lightColor.get();
         dark.set(useDark);
         root.pseudoClassStateChanged(DARK, useDark);
@@ -122,11 +130,33 @@ final class ThemeMode {
         if (!dark && scheme == 1) {
             return "";
         }
-        double hue = switch (scheme) {
+        double hue = hue(scheme);
+        String[] colors = accentColors(dark, scheme);
+        double background = dark ? .2 : 1;
+        String blue = dark ? oklch(.83, .09, hue) : colors[2];
+        String outline = dark ? oklch(.81, .10, hue) : colors[1];
+        return "-blue:" + blue + ";-outline:" + outline + ";-line:" + colors[dark ? 4 : 3]
+                + ";-hover:" + (dark ? oklch(.32, .055, hue) : colors[6])
+                + ";-pressed:" + (dark ? oklch(.39, .07, hue) : colors[5])
+                + ";-title-start:" + (dark ? oklch(.40, .10, hue) : colors[1])
+                + ";-title-center:" + (scheme == 0 ? "#00BBFF" : dark ? oklch(.45, .11, hue) : colors[2])
+                + ";-title-end:" + (dark ? oklch(.40, .10, hue) : colors[1])
+                + ";-home-start:" + oklch(.84 * background, .093, hue + 15)
+                + ";-home-center:" + oklch(.96 * background, .028, hue)
+                + ";-home-end:" + oklch(.84 * background, .093, hue - 15)
+                + ";-avatar:" + colors[3] + ";";
+    }
+
+    private static double hue(int scheme) {
+        return switch (scheme) {
             case 0 -> 235;
             case 2 -> 268;
             default -> 255;
         };
+    }
+
+    private static String[] accentColors(boolean dark, int scheme) {
+        double hue = hue(scheme);
         double light = scheme == 0 ? .36 : scheme == 2 ? -.05 : 0;
         double chroma = scheme == 0 ? .2 : scheme == 2 ? -.1 : -.2;
         double[] l = dark ? new double[]{.96, .75, .6, .65, .45, .25, .225, .2}
@@ -137,19 +167,31 @@ final class ThemeMode {
             colors[i] = oklch(adjust(l[i], i == 0 ? light * .1 : light),
                     adjust(c[i], i == 0 ? chroma * .25 : chroma), hue);
         }
-        double background = dark ? .2 : 1;
-        String blue = dark ? oklch(.83, .09, hue) : colors[2];
-        String outline = dark ? oklch(.81, .10, hue) : colors[1];
-        return "-blue:" + blue + ";-outline:" + outline + ";-line:" + colors[dark ? 4 : 3]
-                + ";-hover:" + (dark ? oklch(.32, .055, hue) : colors[6])
-                + ";-pressed:" + (dark ? oklch(.39, .07, hue) : colors[5])
-                + ";-title-start:" + (dark ? oklch(.40, .10, hue) : colors[1])
-                + ";-title-center:" + (dark ? oklch(.45, .11, hue) : colors[2])
-                + ";-title-end:" + (dark ? oklch(.40, .10, hue) : colors[1])
-                + ";-home-start:" + oklch(.84 * background, .093, hue + 15)
-                + ";-home-center:" + oklch(.96 * background, .028, hue)
-                + ";-home-end:" + oklch(.84 * background, .093, hue - 15)
-                + ";-avatar:" + colors[3] + ";";
+        return colors;
+    }
+
+    record CardColors(javafx.scene.paint.Color ink, javafx.scene.paint.Color highlight,
+                      javafx.scene.paint.Color shadow, javafx.scene.paint.Color surface) {
+        private static CardColors from(String ink, String highlight, String shadow, String surface) {
+            return new CardColors(javafx.scene.paint.Color.web(ink), javafx.scene.paint.Color.web(highlight),
+                    javafx.scene.paint.Color.web(shadow), javafx.scene.paint.Color.web(surface, .733));
+        }
+
+        private static final CardColors DEFAULT = from("#343d4a", "#0b5bcb", "#4890f5", "#e0eafd");
+        private static final java.util.Map<Integer, CardColors> THEMED = new java.util.HashMap<>();
+
+        static CardColors of(Node frame) {
+            if (frame == null) return DEFAULT;
+            var states = frame.getPseudoClassStates();
+            boolean dark = states.contains(DARK);
+            int scheme = states.contains(PseudoClass.getPseudoClass("sky-blue")) ? 0
+                    : states.contains(PseudoClass.getPseudoClass("crash-blue")) ? 2 : 1;
+            if (!dark && scheme == 1) return DEFAULT;
+            return THEMED.computeIfAbsent((dark ? 3 : 0) + scheme, ignored -> {
+                var colors = accentColors(dark, scheme);
+                return from(colors[0], colors[1], colors[3], colors[6]);
+            });
+        }
     }
 
     private static double adjust(double value, double amount) {

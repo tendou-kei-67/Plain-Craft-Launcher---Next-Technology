@@ -44,6 +44,9 @@ final class InstanceSettingsPage {
     private final Consumer<Instance> repair;
     private final BooleanSupplier instanceBusy;
     private final Consumer<Kind> browse;
+    private final Consumer<Path> browseDatapacks;
+    private final InstanceResourcesPage.DatapackServices datapackServices;
+    private final java.util.function.BiConsumer<Path, io.pclnt.minecraft.CommunityResources.Project> browseDatapackProject;
     private final Consumer<Boolean> resourceWrite;
     private final Callable<Boolean> supportsQuickPlay;
     private final Consumer<String> quickPlay;
@@ -51,7 +54,9 @@ final class InstanceSettingsPage {
     InstanceSettingsPage(Instance instance, VanillaInstaller installer, AppearanceOptions options,
                          HostServices links, Notifications notifications, Parent owner, Consumer<Instance> repair,
                          BooleanSupplier instanceBusy, Consumer<Kind> browse, Consumer<Boolean> resourceWrite,
-                         Callable<Boolean> supportsQuickPlay, Consumer<String> quickPlay) {
+                         Callable<Boolean> supportsQuickPlay, Consumer<String> quickPlay, Consumer<Path> browseDatapacks,
+                         InstanceResourcesPage.DatapackServices datapackServices,
+                         java.util.function.BiConsumer<Path, io.pclnt.minecraft.CommunityResources.Project> browseDatapackProject) {
         this.instance = instance;
         this.installer = installer;
         this.options = options;
@@ -61,6 +66,9 @@ final class InstanceSettingsPage {
         this.repair = repair;
         this.instanceBusy = instanceBusy;
         this.browse = browse;
+        this.browseDatapacks = browseDatapacks;
+        this.datapackServices = datapackServices;
+        this.browseDatapackProject = browseDatapackProject;
         this.resourceWrite = resourceWrite;
         this.supportsQuickPlay = supportsQuickPlay;
         this.quickPlay = quickPlay;
@@ -78,7 +86,8 @@ final class InstanceSettingsPage {
         var savesPage = new java.util.concurrent.atomic.AtomicReference<InstanceSavesPage>();
         var saves = SidebarItem.page("存档", "instance-folder", 16, group, () -> {
             var page = new InstanceSavesPage(instance.directory(), gameDirectory(), links, notifications,
-                    instanceBusy, resourceWrite, supportsQuickPlay, quickPlay, details::show);
+                    instanceBusy, resourceWrite, supportsQuickPlay, quickPlay, details::show, browseDatapacks,
+                    datapackServices, browseDatapackProject);
             savesPage.set(page);
             details.show(page.view(() -> browse.accept(Kind.WORLD)));
         }, "刷新存档", "help-refresh", 13, () -> {
@@ -204,13 +213,6 @@ final class InstanceSettingsPage {
     }
 
     private Node settings() {
-        var java = SettingsPage.text(launch.javaPath(), "跟随全局设置");
-        var browse = button("选择 Java", () -> {
-            var chooser = new FileChooser();
-            chooser.setTitle("选择 Java 可执行文件");
-            var selected = chooser.showOpenDialog(owner.getScene().getWindow());
-            if (selected != null) launch.javaPath().set(selected.getAbsolutePath());
-        });
         var group = new ToggleGroup();
         var choices = new HBox(14);
         var titles = List.of("自动配置", "自定义", "跟随全局设置");
@@ -243,7 +245,7 @@ final class InstanceSettingsPage {
         return content(PclCard.fixed("启动选项", SettingsPage.field("实例隔离", isolationChoice()),
                         SettingsPage.windowTitleField(launch.title(), launch.defaultTitle()),
                         SettingsPage.versionInfoField(launch.info(), "跟随全局设置"),
-                        SettingsPage.field("Java", java, browse)),
+                        JavaPicker.field("Java", "跟随全局设置", launch.javaPath(), installer::root)),
                 PclCard.fixed("内存分配", choices, memory, initial,
                         SettingsPage.instanceMemoryOptimization(launch.memoryOptimization())),
                 PclCard.foldable("高级选项", new VBox(10, SettingsPage.field("Java 虚拟机参数", jvm),

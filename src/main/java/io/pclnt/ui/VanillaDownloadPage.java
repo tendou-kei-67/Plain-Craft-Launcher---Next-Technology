@@ -35,6 +35,7 @@ final class VanillaDownloadPage {
     private final Notifications notifications;
     private final TaskMonitor tasks;
     private final Consumer<VanillaInstaller.Instance> onInstalled;
+    private final Runnable changeGameFolder;
     private VanillaCatalog catalog;
     private Task<?> job;
     private boolean installing;
@@ -42,7 +43,7 @@ final class VanillaDownloadPage {
 
     VanillaDownloadPage(HttpClient client, VanillaInstaller installer, AppearanceOptions appearance, Notifications notifications,
                         Consumer<VanillaInstaller.Instance> onInstalled, java.util.function.BooleanSupplier repairing,
-                        TaskMonitor tasks) {
+                        TaskMonitor tasks, Runnable changeGameFolder) {
         this.client = client;
         this.installer = installer;
         this.appearance = appearance;
@@ -54,6 +55,7 @@ final class VanillaDownloadPage {
         this.notifications = notifications;
         this.onInstalled = onInstalled;
         this.tasks = tasks;
+        this.changeGameFolder = changeGameFolder;
     }
 
     Node view() {
@@ -139,14 +141,13 @@ final class VanillaDownloadPage {
         var install = button("开始下载", () -> {});
         install.getStyleClass().add("accent-button");
         PclArtwork.setIcon(install, "download", 15);
-        var back = button("", this::showCatalog);
-        PclArtwork.setIcon(back, "install-back", 14);
-        back.setAccessibleText("返回版本列表");
+        var back = TaskMonitor.iconButton("返回版本列表", "lucide/arrow-left", 17, this::showCatalog);
         var versionName = label(version.id(), "install-version-name");
         var versionIcon = PclArtwork.block(gameBlock(version), 32);
         var banner = new HBox(12, back, versionIcon, versionName);
         banner.setAlignment(Pos.CENTER_LEFT);
         banner.getStyleClass().addAll("pcl-card", "install-banner");
+        CardHover.install(banner, null);
 
         var forgeCard = new ComponentCard<ForgeInstaller.Release>("Forge", "Anvil", ForgeInstaller.Release::version,
                 () -> forge.releases(ForgeInstaller.Distribution.FORGE, version.id()));
@@ -279,12 +280,15 @@ final class VanillaDownloadPage {
                 }
             };
             progress.progressProperty().bind(task.progressProperty());
-            task.setOnSucceeded(done -> {
+            Runnable resetInstallation = () -> {
                 installing = false;
                 progress.progressProperty().unbind();
-                progress.setProgress(1);
                 items.setDisable(false);
                 install.setDisable(false);
+            };
+            task.setOnSucceeded(done -> {
+                resetInstallation.run();
+                progress.setProgress(1);
                 status.setText("安装完成。已将此版本设为启动版本。");
                 var result = task.getValue();
                 if (result.newBase()) appearance.initializeIsolation(version.id(),
@@ -294,18 +298,40 @@ final class VanillaDownloadPage {
                 notifications.post("已安装 " + result.instance().id(), Notifications.Kind.SUCCESS);
             });
             task.setOnFailed(done -> {
-                installing = false;
-                progress.progressProperty().unbind();
+                resetInstallation.run();
                 progress.setProgress(0);
-                items.setDisable(false);
-                install.setDisable(false);
-                status.setText("安装失败：" + message(task.getException()));
+                var failure = task.getException();
+                for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                    if (cause instanceof InterruptedException) {
+                        status.setText("安装已取消，可以重新开始。");
+                        return;
+                    }
+                    if (cause instanceof VanillaInstaller.InsufficientSpace) {
+                        status.setText("安装失败：" + message(cause));
+                        if (view.getScene() != null) {
+                            var switchFolder = new javafx.scene.control.ButtonType("切换游戏文件夹");
+                            PclDialogs.openMessage(view, "磁盘空间不足", message(cause)
+                                            + "\n可在版本选择的左侧添加或切换到有足够空间的游戏文件夹。",
+                                    true, answer -> { if (answer == switchFolder) changeGameFolder.run(); },
+                                    switchFolder, javafx.scene.control.ButtonType.CANCEL);
+                        }
+                        notifications.post("安装失败，游戏文件所在磁盘空间不足", Notifications.Kind.ERROR);
+                        return;
+                    }
+                }
+                status.setText("安装失败：" + message(failure));
                 notifications.post("安装 Minecraft " + version.id() + " 失败", Notifications.Kind.ERROR);
+            });
+            task.setOnCancelled(done -> {
+                resetInstallation.run();
+                progress.setProgress(0);
+                status.setText("安装已取消，可以重新开始。");
             });
             job = task;
             tasks.start("安装 Minecraft " + version.id(), version.id(), task, false, true);
         });
         replace(layout);
+        loaderCards.forEach(ComponentCard::request);
     }
 
     private static final class ComponentCard<T> {
@@ -329,9 +355,7 @@ final class VanillaDownloadPage {
             this.icon = icon;
             card = PclCard.foldable(title, rows, false);
             card.pointRightWhenCollapsed();
-            var clear = button("", this::clear);
-            PclArtwork.setIcon(clear, "install-clear", 10);
-            clear.setAccessibleText("取消安装 " + title);
+            var clear = TaskMonitor.iconButton("取消安装 " + title, "install-clear", 10, this::clear);
             clear.getStyleClass().add("install-clear");
             clear.visibleProperty().bind(selected.isNotNull());
             clear.managedProperty().bind(clear.visibleProperty());
@@ -393,9 +417,9 @@ final class VanillaDownloadPage {
                 autoSelect = false;
                 selected.set(versions.getFirst());
             }
-            summary.setText(selected.get() != null ? name.apply(selected.get()) : versions.isEmpty() ? "无" : "未选择");
+            summary.setText(selected.get() != null ? name.apply(selected.get()) : versions.isEmpty() ? "无可用版本" : "未选择");
             if (versions.isEmpty()) {
-                rows.getChildren().setAll(label("暂无匹配版本。", "card-text"));
+                rows.getChildren().setAll(label("无可用版本", "card-text"));
                 return;
             }
             rows.getChildren().setAll(versions.stream().map(version -> {

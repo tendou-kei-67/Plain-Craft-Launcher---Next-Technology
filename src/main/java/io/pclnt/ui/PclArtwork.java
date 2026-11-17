@@ -100,11 +100,15 @@ final class PclArtwork {
                 var stroke = lucideShape(element);
                 if (stroke == null) continue;
                 stroke.setFill(null);
-                if ("currentColor".equals(element.getAttribute("fill"))) {
+                String fill = element.hasAttribute("fill") ? element.getAttribute("fill") : svg.getAttribute("fill");
+                if ("currentColor".equals(fill)) {
                     stroke.fillProperty().bind(control.textFillProperty());
                 }
-                stroke.strokeProperty().bind(control.textFillProperty());
-                stroke.setStrokeWidth(number(svg, "stroke-width"));
+                String paint = element.hasAttribute("stroke") ? element.getAttribute("stroke") : svg.getAttribute("stroke");
+                if ("currentColor".equals(paint)) {
+                    stroke.strokeProperty().bind(control.textFillProperty());
+                    stroke.setStrokeWidth(number(svg, "stroke-width"));
+                }
                 stroke.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
                 stroke.setStrokeLineJoin(javafx.scene.shape.StrokeLineJoin.ROUND);
                 group.getChildren().add(stroke);
@@ -202,7 +206,16 @@ final class PclArtwork {
     }
 
     private static StackPane graphic(Group artwork, double width, double height) {
-        var graphic = new StackPane(artwork);
+        artwork.setManaged(false);
+        var graphic = new StackPane(artwork) {
+            @Override protected void layoutChildren() {
+                artwork.layout();
+                var bounds = artwork.getBoundsInParent();
+                artwork.setLayoutX(artwork.getLayoutX() + getWidth() / 2 - bounds.getCenterX());
+                artwork.setLayoutY(artwork.getLayoutY() + getHeight() / 2 - bounds.getCenterY());
+            }
+        };
+        artwork.boundsInLocalProperty().addListener(ignored -> graphic.requestLayout());
         graphic.setMinSize(width, height);
         graphic.setPrefSize(width, height);
         graphic.setMaxSize(width, height);

@@ -2,6 +2,7 @@ package io.pclnt.ui;
 
 import io.pclnt.minecraft.GameLaunch;
 import io.pclnt.minecraft.MicrosoftLogin;
+import io.pclnt.minecraft.MicrosoftTokenCache;
 import io.pclnt.minecraft.PlayerProfile;
 import io.pclnt.minecraft.Yggdrasil;
 import java.io.ByteArrayInputStream;
@@ -24,6 +25,7 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
@@ -55,6 +57,7 @@ final class AccountPane {
 
     private final ViewTransition transition;
     private final PlayerProfiles profiles;
+    private final AppearanceOptions options;
     private final Notifications notifications;
     private final Runnable selectionChanged;
     private final Consumer<URI> openPage;
@@ -64,16 +67,29 @@ final class AccountPane {
     private final MicrosoftLogin microsoft = new MicrosoftLogin(System.getenv()
             .getOrDefault("PCLNT_MICROSOFT_CLIENT_ID", MicrosoftLogin.DEFAULT_CLIENT_ID));
     private final Map<UUID, MicrosoftLogin.Session> microsoftSessions = new HashMap<>();
+    private final MicrosoftTokenCache microsoftTokens;
     private final javafx.beans.property.SimpleBooleanProperty microsoftAppearanceBusy = new javafx.beans.property.SimpleBooleanProperty();
 
-    AccountPane(ViewTransition transition, PlayerProfiles profiles, Notifications notifications, Runnable selectionChanged,
+    AccountPane(ViewTransition transition, PlayerProfiles profiles, AppearanceOptions options,
+                Notifications notifications, Runnable selectionChanged,
                 Consumer<URI> openPage, java.util.function.BooleanSupplier gameRunning) {
         this.transition = transition;
         this.profiles = profiles;
+        this.options = options;
         this.notifications = notifications;
         this.selectionChanged = selectionChanged;
         this.openPage = openPage;
         this.gameRunning = gameRunning;
+        microsoftTokens = new MicrosoftTokenCache(options.directory);
+        for (var profile : profiles.profiles()) {
+            if (!profile.microsoft()) continue;
+            try {
+                var saved = microsoftTokens.read(profile);
+                if (saved != null) microsoftSessions.put(profile.id(), saved);
+            } catch (IOException failure) {
+                notifications.post("无法读取 " + profile.name() + " 的微软会话。", Notifications.Kind.ERROR);
+            }
+        }
     }
 
     PlayerProfile selected() { return profiles.selected(); }
@@ -82,10 +98,32 @@ final class AccountPane {
     void session(PlayerProfile profile, Yggdrasil.Session session) { sessions.put(profile.id(), session); }
     MicrosoftLogin microsoft() { return microsoft; }
     MicrosoftLogin.Session microsoftSession(PlayerProfile profile) { return microsoftSessions.get(profile.id()); }
-    void microsoftSession(PlayerProfile profile, MicrosoftLogin.Session session) { microsoftSessions.put(profile.id(), session); }
+    void microsoftSession(PlayerProfile profile, MicrosoftLogin.Session session) {
+        if (microsoftSessions.put(profile.id(), session) == session) return;
+        try {
+            microsoftTokens.save(profile.id(), session);
+        } catch (IOException failure) {
+            notifications.post("无法保存微软会话，下次打开启动器时可能需要登录。", Notifications.Kind.ERROR);
+        }
+    }
+
+    void expireMicrosoftSession(PlayerProfile profile, MicrosoftLogin.Session previous) {
+        if (!microsoftSessions.remove(profile.id(), previous)) return;
+        removeMicrosoftToken(profile);
+        if (profile.equals(selected())) show();
+    }
+
+    private void removeMicrosoftToken(PlayerProfile profile) {
+        try {
+            microsoftTokens.remove(profile.id());
+        } catch (IOException failure) {
+            notifications.post("无法删除已失效的微软会话文件。", Notifications.Kind.ERROR);
+        }
+    }
 
     boolean canLaunch(PlayerProfile profile) {
-        return profile != null && (!profile.microsoft() || microsoftSession(profile) != null && !microsoftAppearanceBusy.get())
+        return profile != null && (!profile.microsoft() || microsoft.configured()
+                && microsoftSession(profile) != null && !microsoftAppearanceBusy.get())
                 && (!profile.thirdParty() || session(profile) != null);
     }
 
@@ -98,35 +136,33 @@ final class AccountPane {
     }
 
     private Node profileList() {
-        var rows = new VBox(3);
-        for (var profile : profiles.profiles()) {
-            var title = label(profile.name(), "card-title");
-            title.setWrapText(false);
-            title.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
-            var type = label(profile.microsoft() ? "微软账户" : profile.thirdParty() ? "第三方账户" : "离线档案",
-                    "help-row-description");
-            type.setWrapText(false);
-            type.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
-            var select = new Button();
-            select.setAccessibleText(profile.name());
-            select.getStyleClass().add("help-row");
-            select.setGraphic(new HBox(10, avatar(profile, 30), new VBox(2, title, type)));
-            select.setMaxWidth(Double.MAX_VALUE);
-            select.setOnAction(event -> change(() -> profiles.select(profile)));
-            var remove = item("删除档案", () -> delete(profile));
-            select.setContextMenu(profile.thirdParty() || profile.microsoft() ? new ContextMenu(remove)
-                    : new ContextMenu(item("更改 UUID", () -> editUuid(profile)), remove));
-            rows.getChildren().add(select);
-        }
-        var list = new ScrollPane(rows);
-        list.getStyleClass().add("page-scroll");
+        var rows = new VBox(4);
+        rows.setPadding(new Insets(2, 10, 2, 8));
+        profiles.profiles().forEach(profile -> rows.getChildren().add(profileRow(profile)));
+        var list = new SpringScrollPane(rows);
+        list.getStyleClass().add("section-scroll");
         list.setFitToWidth(true);
-        list.setPrefViewportHeight(Math.min(300, profiles.profiles().size() * 52));
-        list.setMaxHeight(300);
-        list.setVisible(!profiles.profiles().isEmpty());
-        list.managedProperty().bind(list.visibleProperty());
-        var hint = label(profiles.profiles().isEmpty() ? "新建并选择一个档案以启动游戏" : "选择一个档案以启动游戏", "card-text");
-        hint.setWrapText(true);
+        list.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        list.setMinHeight(0);
+        double listHeight = Math.min(300, profiles.profiles().size() * 46.0);
+        list.setPrefHeight(listHeight);
+        list.setMaxHeight(listHeight);
+        var listArea = new StackPane(list);
+        listArea.setMinHeight(0);
+        StackPane.setAlignment(list, Pos.CENTER);
+        VBox.setMargin(listArea, new Insets(0, 10, 0, 10));
+        boolean empty = profiles.profiles().isEmpty();
+        var hintText = label(empty ? "新建并选择一个档案以启动游戏" : "选择一个档案以启动游戏", "profile-hint-text");
+        var hint = new HBox(8, profileGlyph("lucide/info", 14), hintText);
+        hint.getStyleClass().add("profile-select-hint");
+        hint.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(hintText, Priority.ALWAYS);
+        if (!empty) {
+            hintText.setMaxWidth(Double.MAX_VALUE);
+            hint.getChildren().add(TaskMonitor.iconButton("关闭提示", "lucide/x", 12,
+                    () -> options.profileHintDismissed.set(true)));
+            SettingsPage.bindVisible(hint, options.profileHintDismissed.not());
+        }
         var add = profileAction("新建档案", "lucide/user-plus", 17.25, this::create);
         HBox.setMargin(add, new Insets(0.5, 9, 0, 0));
         var addCard = new HBox(add);
@@ -135,10 +171,78 @@ final class AccountPane {
         var addRow = new HBox(addCard);
         addRow.setAlignment(Pos.CENTER);
         // Mirror PageLoginProfile.xaml: hint, 10px gap, list, 10px gap, centred new-profile card, 20px bottom padding.
-        var view = new VBox(hint, spacer(10), list, spacer(10), addRow, spacer(20));
-        VBox.setMargin(hint, new Insets(10, 0, 0, 0));
-        view.setAlignment(Pos.CENTER_LEFT);
+        var view = new VBox(hint, spacer(10), listArea, spacer(10), addRow, spacer(20));
+        view.setAlignment(Pos.CENTER);
         return view;
+    }
+
+    private Node profileRow(PlayerProfile profile) {
+        var title = label(profile.name(), "profile-row-name");
+        var type = label(profileType(profile), "help-row-description");
+        title.setWrapText(false);
+        type.setWrapText(false);
+        var identity = new VBox(1, title, type);
+        identity.setAlignment(Pos.CENTER_LEFT);
+        identity.setMinWidth(0);
+        boolean offline = !profile.microsoft() && !profile.thirdParty();
+        var logo = offline ? avatar(profile, 28) : profileGlyph("lucide/user", 24);
+        var insignia = new StackPane(logo);
+        insignia.setMinWidth(28);
+        var description = new HBox(7, insignia, identity);
+        description.setAlignment(Pos.CENTER_LEFT);
+        var select = new Button(null, description);
+        select.setAccessibleText(profile.name() + "，" + profileType(profile));
+        select.getStyleClass().addAll("help-row", "profile-list-select");
+        select.setMaxWidth(Double.MAX_VALUE);
+        select.setOnAction(event -> change(() -> profiles.select(profile)));
+
+        var uuid = offline ? profileAction("更改 UUID", "lucide/pencil", 14, () -> editUuid(profile))
+                : profileAction("复制 UUID", "lucide/copy", 14, () -> copyUuid(profile));
+        var remove = profileAction("删除档案", "lucide/trash-2", 14, () -> delete(profile));
+        var actions = new HBox(2, uuid, remove);
+        actions.getStyleClass().add("profile-row-actions");
+        actions.setAlignment(Pos.CENTER_RIGHT);
+        actions.setMaxWidth(Region.USE_PREF_SIZE);
+        actions.setOpacity(0);
+        actions.setMouseTransparent(true);
+        var row = new StackPane(select, actions);
+        select.widthProperty().addListener((observable, old, width) ->
+                description.setMaxWidth(Math.max(0, width.doubleValue() - 57)));
+        StackPane.setAlignment(actions, Pos.CENTER_RIGHT);
+        StackPane.setMargin(actions, new Insets(0, 4, 0, 0));
+        var fade = new javafx.beans.property.SimpleObjectProperty<javafx.animation.Timeline>();
+        Runnable update = () -> {
+            boolean visible = row.isHover() || row.isFocusWithin();
+            actions.setMouseTransparent(!visible);
+            if (fade.get() != null) fade.get().stop();
+            var motion = UiMotion.track(actions.opacityProperty(), visible ? 1 : 0, 0, visible ? 120 : 180, UiMotion.OUT_WEAK);
+            fade.set(motion);
+            motion.play();
+        };
+        row.hoverProperty().addListener(ignored -> update.run());
+        row.focusWithinProperty().addListener(ignored -> update.run());
+        return row;
+    }
+
+    private static String profileType(PlayerProfile profile) {
+        if (profile.microsoft()) return "正版验证";
+        if (profile.thirdParty()) return "第三方验证 / " + URI.create(profile.server()).getHost();
+        return "离线验证";
+    }
+
+    private static Node profileGlyph(String name, double size) {
+        var glyph = label("", "profile-glyph");
+        PclArtwork.setIcon(glyph, name, size, size);
+        glyph.setMouseTransparent(true);
+        return glyph;
+    }
+
+    private void copyUuid(PlayerProfile profile) {
+        var clipboard = new javafx.scene.input.ClipboardContent();
+        clipboard.putString(profile.uuid());
+        if (javafx.scene.input.Clipboard.getSystemClipboard().setContent(clipboard)) {
+            notifications.post("已复制 UUID", Notifications.Kind.SUCCESS);
+        }
     }
 
     private static Region spacer(double height) {
@@ -150,14 +254,36 @@ final class AccountPane {
     }
 
     private void create() {
-        PclDialogs.choose(transition.host(), "新建档案 - 选择验证类型", "离线",
-                List.of("微软账户", "第三方账户", "离线")).ifPresent(type -> {
-            switch (type) {
-                case "离线" -> transition.show(offlineForm());
-                case "微软账户" -> transition.show(microsoftForm(null));
-                case "第三方账户" -> transition.show(thirdPartyForm(null));
-            }
-        });
+        var group = new ToggleGroup();
+        var microsoftOption = accountChoice(group, "正版验证", "lucide/shield-check");
+        var thirdParty = accountChoice(group, "第三方验证", "lucide/network");
+        var offline = accountChoice(group, "离线验证", "lucide/link-2-off");
+        microsoftOption.setSelected(true);
+        var purchase = new Hyperlink("前往Minecraft官网购买正版");
+        purchase.getStyleClass().add("pcl-purchase-link");
+        PclButtonSkin.animateStandalone(purchase);
+        purchase.setOnAction(event -> openPage.accept(URI.create("https://www.minecraft.net/zh-hans/store/minecraft-java-bedrock-edition-pc")));
+        var microsoftRow = new HBox(8, microsoftOption, purchase);
+        microsoftRow.setAlignment(Pos.CENTER_LEFT);
+        var choices = new VBox(12, microsoftRow, thirdParty, offline);
+        var proceed = new ButtonType("继续", javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        PclDialogs.openForm(transition.host(), "新建档案 - 选择验证类型", choices, response -> {
+            if (response != proceed) return;
+            var selected = group.getSelectedToggle();
+            transition.show(selected == microsoftOption ? microsoftForm(null)
+                    : selected == thirdParty ? thirdPartyForm(null) : offlineForm());
+        }, proceed, ButtonType.CANCEL);
+    }
+
+    private static RadioButton accountChoice(ToggleGroup group, String title, String artwork) {
+        var button = new RadioButton(title);
+        button.setToggleGroup(group);
+        AppearanceControlMotion.install(button);
+        var decoration = new HBox(7, button.getGraphic(), profileGlyph(artwork, 20));
+        decoration.setAlignment(Pos.CENTER_LEFT);
+        decoration.setMouseTransparent(true);
+        button.setGraphic(decoration);
+        return button;
     }
 
     private Node microsoftForm(PlayerProfile existing) {
@@ -166,7 +292,7 @@ final class AccountPane {
         var back = button("返回", this::show);
         signIn.setOnAction(event -> {
             if (!microsoft.configured()) {
-                notifications.post("请先配置微软 Client ID（PCLNT_MICROSOFT_CLIENT_ID）。", Notifications.Kind.INFO);
+                notifications.post("微软 Client ID 不存在（PCLNT_MICROSOFT_CLIENT_ID）。", Notifications.Kind.INFO);
                 return;
             }
             signIn.setDisable(true);
@@ -248,7 +374,8 @@ final class AccountPane {
             if (bytes == null) saveSkin(profile);
             else saveSkin(profile.name() + ".png", () -> new ByteArrayInputStream(bytes));
         });
-        boolean loggedIn = microsoftSession(profile) != null;
+        var currentSession = microsoftSession(profile);
+        boolean loggedIn = currentSession != null && microsoft.configured();
         for (var action : new MenuItem[]{upload, refresh, cape}) {
             if (loggedIn) action.disableProperty().bind(working);
             else action.setDisable(true);
@@ -294,14 +421,14 @@ final class AccountPane {
             reauth.disableProperty().bind(working);
             info.getItems().addFirst(reauth);
         }
-        var content = profileBodyParts(head, profile.name(), "微软账户", skin, info);
+        var content = profileBodyParts(head, profile.name(), profileType(profile), skin, info);
         if (!loggedIn) {
             var signIn = button("登录", () -> transition.show(microsoftForm(profile)));
             signIn.disableProperty().bind(working);
             VBox.setMargin(signIn, new Insets(8, 0, 0, 0));
             content.root().getChildren().add(signIn);
         }
-        if (loggedIn) reload.run();
+        if (loggedIn && currentSession.hasAccessToken()) reload.run();
         return profilePage(content, skin, info);
     }
 
@@ -386,7 +513,7 @@ final class AccountPane {
             }, "刷新皮肤失败");
         };
         refresh.setOnAction(event -> reload.run());
-        var content = profileBodyParts(head, profile.name(), "第三方账户 · " + api.getHost(), skin, info);
+        var content = profileBodyParts(head, profile.name(), profileType(profile), skin, info);
         if (!loggedIn) {
             var signIn = button("登录", () -> transition.show(thirdPartyForm(profile)));
             var actions = new HBox(signIn);
@@ -561,7 +688,7 @@ final class AccountPane {
                 item("更改披风", () -> unavailable("离线档案不支持更改披风。")));
         var info = new ContextMenu(item("修改密码", () -> unavailable("离线档案没有密码。")),
                 item("修改玩家 ID", () -> editName(profile)));
-        var content = profileBodyParts(avatar(profile, 64), profile.name(), "离线档案", skin, info);
+        var content = profileBodyParts(avatar(profile, 64), profile.name(), profileType(profile), skin, info);
         return profilePage(content, skin, info);
     }
 
@@ -586,8 +713,9 @@ final class AccountPane {
         typeLabel.setWrapText(false);
         typeLabel.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
         typeLabel.setMaxWidth(232);
+        avatar.setEffect(new javafx.scene.effect.DropShadow(10, javafx.scene.paint.Color.rgb(29, 89, 165, .2)));
         var body = new VBox(avatar, nameLabel, typeLabel, actions);
-        body.setAlignment(Pos.CENTER);
+        body.setAlignment(Pos.TOP_CENTER);
         body.setFillWidth(false);
         body.setMaxWidth(Region.USE_PREF_SIZE);
         // Mirror PageLoginProfileSkin.xaml: 10px under the skin, 4px between name and type, then the
@@ -599,17 +727,13 @@ final class AccountPane {
         return new ProfileBody(body, actions);
     }
 
-    /**
-     * Wraps the avatar/name/card block the way PageLoginProfileSkin.xaml does: an 80px empty row,
-     * then the block, with the whole group vertically centred in the login area.
-     */
     private Node profilePage(ProfileBody content, ContextMenu skin, ContextMenu info) {
         var group = new VBox(spacer(80), content.root());
-        group.setAlignment(Pos.CENTER);
+        group.setAlignment(Pos.TOP_CENTER);
         group.setFillWidth(false);
         group.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
         var page = new StackPane(group);
-        page.setAlignment(Pos.CENTER);
+        page.setAlignment(Pos.TOP_CENTER);
         page.setPickOnBounds(true);
         page.hoverProperty().addListener((observable, old, hovered) -> fadeActions(page, content.actions(), skin, info));
         content.actions().focusWithinProperty()
@@ -699,6 +823,7 @@ final class AccountPane {
                 profiles.delete(profile);
                 sessions.remove(profile.id());
                 microsoftSessions.remove(profile.id());
+                if (profile.microsoft()) removeMicrosoftToken(profile);
             });
         }
     }

@@ -44,7 +44,8 @@ final class AppearanceOptions {
     final BooleanProperty forceShow = new SimpleBooleanProperty(false);
     final IntegerProperty windowOpacity, imageOpacity, imageBlur, imageFit, logoType, homeType, homePreset;
     final IntegerProperty colorMode, lightColor, darkColor;
-    final BooleanProperty startupLogo, colorfulBackground, logoLeft;
+    final BooleanProperty startupLogo, lockWindowSize, showLaunchingHint, colorfulBackground, logoLeft;
+    final BooleanProperty profileHintDismissed;
     final BooleanProperty autoPauseVideo;
     final BooleanProperty materialEnabled;
     final IntegerProperty materialRadius, materialSampling, materialMethod;
@@ -57,7 +58,7 @@ final class AppearanceOptions {
     final StringProperty preLaunchCommand;
     final BooleanProperty preLaunchWait;
     final StringProperty launchTitle, launchInfo;
-    final IntegerProperty launchVisibility;
+    final IntegerProperty launchVisibility, launchPriority, launchIpStack, microsoftAuthType;
     final StringProperty logoText, homeUrl, offlineNames;
     final GameFolders gameFolders;
     final StringProperty toolDownloadFolder;
@@ -75,10 +76,13 @@ final class AppearanceOptions {
         }
         saveDelay.setOnFinished(event -> flush());
         windowOpacity = integer("UiLauncherTransparent", 600, 0, 600);
-        colorMode = integer("UiDarkMode", 2, 0, 2);
+        colorMode = integer("UiDarkMode", 2, 0, 3);
         lightColor = integer("UiLightColor", 1, 0, 2);
         darkColor = integer("UiDarkColor", 1, 0, 2);
         startupLogo = flag("UiLauncherLogo", true);
+        lockWindowSize = flag("UiLockWindowSize", false);
+        showLaunchingHint = flag("UiShowLaunchingHint", true);
+        profileHintDismissed = flag("HintProfileSelect", false);
         autoPauseVideo = flag("UiAutoPauseVideo", true);
         materialEnabled = flag("UiBlur", false);
         materialRadius = integer("UiBlurValue", 16, 0, 40);
@@ -93,6 +97,9 @@ final class AppearanceOptions {
         launchWindow = integer("LaunchArgumentWindowType", 1, 0, 4);
         defaultIsolation = integer("LaunchArgumentIndieV2", 4, 0, 4);
         launchVisibility = integer("LaunchArgumentVisible", 5, 0, 5);
+        launchPriority = integer("LaunchArgumentPriority", 1, 0, 4);
+        microsoftAuthType = integer("LoginMsAuthType", 1, 1, 1);
+        launchIpStack = integer("LaunchPreferredIpStack", 1, 0, 2);
         launchWidth = integer("LaunchArgumentWindowWidth", 854, 1, 99999);
         launchHeight = integer("LaunchArgumentWindowHeight", 480, 1, 99999);
         launchJava = string("LaunchArgumentJavaSelect");
@@ -234,7 +241,8 @@ final class AppearanceOptions {
                     isolated.get(), List.of(
                             new LaunchOptions.PreLaunchCommand(global.preLaunchCommand.get(), global.preLaunchWait.get()),
                             new LaunchOptions.PreLaunchCommand(preLaunchCommand.get(), preLaunchWait.get())),
-                    defaultTitle.get() ? "" : override(title, global.launchTitle), override(info, global.launchInfo));
+                    defaultTitle.get() ? "" : override(title, global.launchTitle), override(info, global.launchInfo),
+                    global.launchPriority.get(), global.launchIpStack.get());
         }
 
         private static String override(StringProperty value, StringProperty global) {
@@ -253,6 +261,8 @@ final class AppearanceOptions {
             lightColor.set(1);
             darkColor.set(1);
             startupLogo.set(true);
+            lockWindowSize.set(false);
+            showLaunchingHint.set(true);
             autoPauseVideo.set(true);
             imageOpacity.set(1000);
             imageBlur.set(0);

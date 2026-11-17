@@ -17,7 +17,9 @@ public final class BedrockEdition {
 
     private BedrockEdition() {}
 
-    public record Installation(String version, String appId) {}
+    public record Installation(String version, String appId, String drive, String volume) {
+        public String driveLabel() { return (drive + " " + volume).strip(); }
+    }
 
     public static boolean supported() {
         return System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("windows");
@@ -44,17 +46,24 @@ public final class BedrockEdition {
                     } | Select-Object -First 1
                 }
                 if ($null -eq $app) { exit 2 }
-                [Console]::WriteLine(('{0}|{1}!{2}' -f $package.Version, $package.PackageFamilyName, $app.Id))
+                $root = [IO.Path]::GetPathRoot($package.InstallLocation)
+                $label = ''
+                if ($root) {
+                    try { $label = [IO.DriveInfo]::new($root).VolumeLabel } catch {}
+                }
+                [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+                $drive = if ($root) { $root.TrimEnd([char]92) } else { '' }
+                [Console]::WriteLine(('{0}|{1}!{2}|{3}|{4}' -f $package.Version, $package.PackageFamilyName, $app.Id, $drive, $label))
                 """.formatted(PACKAGE, FAMILY);
         String line = run(script, "无法查询 Minecraft for Windows 的安装状态");
         if (line.isEmpty()) {
             return Optional.empty();
         }
-        var fields = line.split("\\|", -1);
-        if (fields.length != 2 || !fields[0].matches("\\d+(?:\\.\\d+){3}") || !officialAppId(fields[1])) {
+        var fields = line.split("\\|", 4);
+        if (fields.length != 4 || !fields[0].matches("\\d+(?:\\.\\d+){3}") || !officialAppId(fields[1])) {
             throw new IOException("Windows 返回了无效的基岩版安装信息");
         }
-        return Optional.of(new Installation(fields[0], fields[1]));
+        return Optional.of(new Installation(fields[0], fields[1], fields[2], fields[3]));
     }
 
     public static void openStore() throws IOException, InterruptedException {

@@ -11,11 +11,28 @@ import java.util.Locale;
 public record LaunchOptions(int memoryMode, int memorySlider, int gcMode, String javaPath, String jvmArguments,
                             String gameArguments, int windowMode, int width, int height,
                             int initialMemorySlider, boolean lockMemory, boolean isolated,
-                            List<PreLaunchCommand> preLaunchCommands, String windowTitle, String versionInfo) {
+                            List<PreLaunchCommand> preLaunchCommands, String windowTitle, String versionInfo,
+                            int processPriority, int preferredIpStack) {
     public record PreLaunchCommand(String command, boolean waitForExit) {}
 
     public LaunchOptions {
         preLaunchCommands = List.copyOf(preLaunchCommands);
+    }
+
+    public LaunchOptions(int memoryMode, int memorySlider, int gcMode, String javaPath, String jvmArguments,
+                         String gameArguments, int windowMode, int width, int height, int initialMemorySlider,
+                         boolean lockMemory, boolean isolated, List<PreLaunchCommand> preLaunchCommands,
+                         String windowTitle, String versionInfo) {
+        this(memoryMode, memorySlider, gcMode, javaPath, jvmArguments, gameArguments, windowMode, width, height,
+                initialMemorySlider, lockMemory, isolated, preLaunchCommands, windowTitle, versionInfo, 1, 1);
+    }
+
+    void applyIpPreference(List<String> command) {
+        switch (preferredIpStack) {
+            case 0 -> command.addAll(List.of("-Djava.net.preferIPv4Stack=true", "-Djava.net.preferIPv4Addresses=true"));
+            case 2 -> command.addAll(List.of("-Djava.net.preferIPv6Stack=true", "-Djava.net.preferIPv6Addresses=true"));
+            default -> { }
+        }
     }
 
     public LaunchOptions(int memoryMode, int memorySlider, int gcMode, String javaPath, String jvmArguments,

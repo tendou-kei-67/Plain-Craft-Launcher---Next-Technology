@@ -108,8 +108,8 @@ public final class GameLaunch {
         var metadata = version.metadata();
         int required = metadata.has("javaVersion")
                 ? metadata.getAsJsonObject("javaVersion").get("majorVersion").getAsInt() : 8;
-        var java = javaExecutable(required, options.javaPath());
         var root = installer.root();
+        var java = javaExecutable(required, options.javaPath(), root);
         var gameDirectory = installer.gameDirectory(instance, options.isolated());
         if (world != null) {
             if (!supportsQuickPlay(metadata)) throw new IOException("此版本不支持存档快捷启动");
@@ -143,9 +143,9 @@ public final class GameLaunch {
         classpath.add(require(clientJar(version.client())));
         String cp = String.join(File.pathSeparator, classpath.stream().map(Path::toString).toList());
         String assetsId = string(metadata, "assets");
-        if (metadata.has("assetIndex")) {
-            assetsId = string(metadata.getAsJsonObject("assetIndex"), "id");
-        }
+        var assetsIndex = VanillaInstaller.assetIndex(metadata);
+        if (assetsIndex != null) assetsId = string(assetsIndex, "id");
+        else if (assetsId.isBlank() && metadata.get("assetIndex") instanceof JsonObject index) assetsId = string(index, "id");
         Path gameAssets = materializeLegacyAssets(root, gameDirectory, assetsId);
         var context = Map.ofEntries(
                 Map.entry("path", folder(Path.of("").toAbsolutePath())),
@@ -173,6 +173,7 @@ public final class GameLaunch {
         command.add(java.toString());
         int maximumHeap = options.heapMegabytes(instance, gameDirectory);
         command.add("-Xmx" + maximumHeap + "M");
+        options.applyIpPreference(command);
         command.addAll(extraJvm);
         for (String argument : LaunchOptions.splitArguments(options.jvmArguments())) {
             command.add(substitute(argument, values));
@@ -257,6 +258,7 @@ public final class GameLaunch {
         }
         var process = new ProcessBuilder(command).directory(gameDirectory.toFile()).redirectErrorStream(true)
                 .redirectOutput(logs.resolve("pcl-nt-launch.log").toFile()).start();
+        GameProcessPriority.apply(process, options.processPriority());
         if ("windows".equals(platform()) && !options.windowTitle().isBlank()) {
             GameWindowTitle.watch(process, () -> renderLaunchText(options.windowTitle(), context));
         }
@@ -418,10 +420,10 @@ public final class GameLaunch {
     }
 
     static Path javaExecutable(int required) throws IOException {
-        return javaExecutable(required, "");
+        return javaExecutable(required, "", null);
     }
 
-    private static Path javaExecutable(int required, String preferred) throws IOException {
+    private static Path javaExecutable(int required, String preferred, Path gameDirectory) throws IOException {
         String binary = "windows".equals(platform()) ? "java.exe" : "java";
         // An explicitly selected Java always wins, even when its major version differs from the
         // version metadata. Players deliberately pick newer runtimes (for example Java 21 for a
@@ -481,12 +483,15 @@ public final class GameLaunch {
                 return candidate.toAbsolutePath();
             }
         }
+        for (var installation : JavaInstallations.scan(gameDirectory)) {
+            if (installation.major() == required) return installation.executable();
+        }
         throw new IOException("未找到 Java " + required + "。请在 设置 → 启动设置 或 版本设置 中选择 Java，"
                 + "或安装 Java " + required + " 后重试。");
     }
 
     /** Resolves the Java path explicitly chosen in the launcher, or null when it is left on automatic. */
-    private static Path explicitJava(String preferred, String binary) throws IOException {
+    static Path explicitJava(String preferred, String binary) throws IOException {
         if (preferred == null || preferred.isBlank()) {
             return null;
         }
@@ -501,7 +506,7 @@ public final class GameLaunch {
             Path direct = candidate.resolve(binary);
             candidate = Files.isExecutable(direct) ? direct : candidate.resolve("bin").resolve(binary);
         }
-        if (!Files.isExecutable(candidate)) {
+        if (!Files.isRegularFile(candidate) || !Files.isExecutable(candidate)) {
             throw new IOException("找不到所选的 Java：" + preferred + "，请在 设置 → 启动设置 或 版本设置 中重新选择。");
         }
         return candidate.toAbsolutePath().normalize();
@@ -518,7 +523,9 @@ public final class GameLaunch {
         }
     }
 
-    private static int javaMajor(Path executable) {
+    static int javaMajor(Path executable) {
+        int released = JavaInstallations.releaseVersion(executable);
+        if (released > 0) return released;
         Process process = null;
         try {
             process = new ProcessBuilder(executable.toString(), "-version").redirectErrorStream(true).start();

@@ -49,7 +49,8 @@ final class ToolboxPage {
     private String suggestedName = "";
     private boolean downloading;
 
-    ToolboxPage(AppearanceOptions options, Notifications notifications, HostServices links, Parent owner, TaskMonitor tasks) {
+    ToolboxPage(AppearanceOptions options, Notifications notifications, HostServices links, Parent owner, TaskMonitor tasks,
+                Runnable openTasks) {
         this.options = options;
         this.notifications = notifications;
         this.links = links;
@@ -75,7 +76,10 @@ final class ToolboxPage {
         var group = new ToggleGroup();
         var toolbox = SidebarItem.page("百宝箱", "toolbox", 17, group, () -> {});
         toolbox.toggle().setSelected(true);
-        var navigation = sidebar(label("奇妙小工具", "settings-group-title"), toolbox);
+        var heading = label("奇妙小工具", "settings-group-title");
+        javafx.scene.layout.VBox.setMargin(heading, new javafx.geometry.Insets(0, 0, 0, 13));
+        var navigation = sidebar(heading, toolbox,
+                SidebarItem.action("任务管理", "task-manager", 17, openTasks));
         navigation.getStyleClass().add("pcl-sidebar");
         view = section(navigation, cards);
     }

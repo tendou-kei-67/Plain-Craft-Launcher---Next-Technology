@@ -75,6 +75,23 @@ final class UiMotion {
                 new KeyFrame(Duration.millis(delay + millis), new KeyValue(property, target, easing)));
     }
 
+    static void revealActions(Node row, Node actions, int enterDelay, int enterTime, int exitTime) {
+        actions.setOpacity(0);
+        actions.setMouseTransparent(true);
+        var fade = new SimpleObjectProperty<Timeline>();
+        Runnable update = () -> {
+            boolean visible = row.isHover() || row.isFocusWithin();
+            actions.setMouseTransparent(!visible);
+            if (fade.get() != null) fade.get().stop();
+            var motion = track(actions.opacityProperty(), visible ? 1 : 0, visible ? enterDelay : 0,
+                    visible ? enterTime : exitTime, Interpolator.LINEAR);
+            fade.set(motion);
+            motion.play();
+        };
+        row.hoverProperty().addListener(ignored -> update.run());
+        row.focusWithinProperty().addListener(ignored -> update.run());
+    }
+
     static void installButtons(Node node, ObservableBooleanValue dark) {
         if (node instanceof ToggleButton button) {
             boolean login = button.getStyleClass().contains("login-pill");
@@ -100,8 +117,18 @@ final class UiMotion {
         var animation = new ParallelTransition();
         var pressed = additive(0.045 / 0.055, 80, 700, OUT_EXTRA_STRONG, OUT_MIDDLE);
         button.armedProperty().addListener((observable, old, armed) -> {
+            if (button.getStyleClass().contains("pcl-icon-text-button")) return;
             animation.stop();
             boolean pointerLeft = !armed && button.isPressed() && !button.isHover();
+            if (button.getStyleClass().contains("resource-project")) {
+                var easing = OUT_MIDDLE;
+                double scale = armed ? .996 : 1;
+                animation.getChildren().setAll(
+                        track(button.scaleXProperty(), scale, 0, 144, easing),
+                        track(button.scaleYProperty(), scale, 0, 144, easing));
+                animation.play();
+                return;
+            }
             int delay = armed || pointerLeft ? 0 : 10;
             int millis = armed ? 700 : pointerLeft ? 800 : 300;
             var easing = armed ? pressed : pointerLeft ? OUT_STRONG : OUT_MIDDLE;
@@ -110,6 +137,31 @@ final class UiMotion {
                     track(button.scaleXProperty(), scale, delay, millis, easing),
                     track(button.scaleYProperty(), scale, delay, millis, easing));
             animation.playFromStart();
+        });
+    }
+
+    static void installIconPress(Button button) {
+        if (button.getProperties().putIfAbsent("pclIconPress", true) != null) return;
+        var motion = new ParallelTransition();
+        button.armedProperty().addListener((observable, old, armed) -> {
+            motion.stop();
+            var artwork = button.getGraphic();
+            if (artwork == null || artwork.scaleXProperty().isBound() || artwork.scaleYProperty().isBound()) return;
+            double start = artwork.getScaleX();
+            boolean pointerLeft = !armed && button.isPressed() && !button.isHover();
+            var easing = armed ? OUT_STRONG : pointerLeft ? OUT_MIDDLE : new Interpolator() {
+                @Override protected double curve(double t) {
+                    return (1.05 - start) * BACK_WEAK.interpolate(0.0, 1.0, t)
+                            - .05 * OUT_STRONG.interpolate(0.0, 1.0, t);
+                }
+                @Override public double interpolate(double from, double to, double t) {
+                    return start + curve(t);
+                }
+            };
+            motion.getChildren().setAll(
+                    track(artwork.scaleXProperty(), armed ? .8 : 1, 0, armed ? 400 : 250, easing),
+                    track(artwork.scaleYProperty(), armed ? .8 : 1, 0, armed ? 400 : 250, easing));
+            motion.play();
         });
     }
 

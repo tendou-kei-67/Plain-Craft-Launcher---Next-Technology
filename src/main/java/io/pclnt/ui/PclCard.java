@@ -5,7 +5,6 @@ import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
 import javafx.beans.property.SimpleDoubleProperty;
-import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Pos;
 import javafx.scene.AccessibleAttribute;
 import javafx.scene.AccessibleRole;
@@ -13,12 +12,10 @@ import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.effect.DropShadow;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.transform.Scale;
@@ -57,14 +54,6 @@ final class PclCard extends VBox {
         setFillWidth(true);
         title = LauncherController.label(text, "card-title");
         title.setWrapText(false);
-        var ink = new SimpleObjectProperty<>(Color.rgb(52, 61, 74));
-        title.textFillProperty().bind(ink);
-        var dark = new javafx.beans.property.SimpleBooleanProperty();
-        var themeState = (javafx.collections.SetChangeListener<javafx.css.PseudoClass>) change -> {
-            if (ThemeMode.DARK.equals(change.getElementAdded()) || ThemeMode.DARK.equals(change.getElementRemoved())) {
-                dark.set(change.wasAdded());
-            }
-        };
         header = new BorderPane();
         header.setLeft(title);
         BorderPane.setAlignment(title, Pos.CENTER_LEFT);
@@ -111,35 +100,7 @@ final class PclCard extends VBox {
         body.setVisible(expanded);
         body.setMouseTransparent(!expanded);
         getChildren().add(viewport);
-        var shadow = new DropShadow(3, Color.rgb(52, 61, 74, .07));
-        shadow.setOffsetY(1);
-        setEffect(shadow);
-        var hover = new Timeline();
-        Runnable refreshInk = () -> {
-            boolean over = isHover();
-            hover.stop();
-            hover.getKeyFrames().setAll(new KeyFrame(Duration.millis(90),
-                    new KeyValue(shadow.colorProperty(), over ? Color.rgb(72, 144, 245, .40)
-                            : Color.rgb(52, 61, 74, .07), Interpolator.LINEAR),
-                    new KeyValue(ink, dark.get() ? (over ? Color.web("#a3c6ff") : Color.web("#f2f2f2"))
-                            : (over ? Color.rgb(11, 91, 203) : Color.rgb(52, 61, 74)), Interpolator.LINEAR)));
-            hover.play();
-        };
-        // A page can be attached to the launcher after its cards have been constructed.
-        sceneProperty().addListener((observable, previous, scene) -> {
-            Node oldOwner = previous == null ? null : previous.lookup("#frame");
-            Node owner = scene == null ? null : scene.lookup("#frame");
-            if (oldOwner != null) {
-                oldOwner.getPseudoClassStates().removeListener(themeState);
-            }
-            if (owner != null) {
-                owner.getPseudoClassStates().addListener(themeState);
-            }
-            dark.set(owner != null && owner.getPseudoClassStates().contains(ThemeMode.DARK));
-        });
-        dark.addListener(ignored -> refreshInk.run());
-        hoverProperty().addListener(ignored -> refreshInk.run());
-        MaterialBackdrop.install(this);
+        CardHover.install(this, title);
     }
 
     String title() { return title.getText(); }

@@ -50,15 +50,12 @@ public final class WorldSave {
     }
 
     public static void update(Path world, Settings settings) throws IOException {
-        checkDirectory(world);
-        Path level = world.resolve("level.dat");
-        Path backup = world.resolve("level.dat_old");
-        Path lockPath = world.resolve("session.lock");
-        if (Files.isSymbolicLink(level) || Files.isSymbolicLink(backup) || Files.isSymbolicLink(lockPath)) {
-            throw new IOException("存档元数据或锁文件是符号链接");
-        }
-        try (var channel = Files.exists(lockPath, NOFOLLOW_LINKS) ? FileChannel.open(lockPath, WRITE, NOFOLLOW_LINKS) : null;
-             var lock = channel == null ? null : acquireLock(channel)) {
+        withSaveLock(world, () -> {
+            Path level = world.resolve("level.dat");
+            Path backup = world.resolve("level.dat_old");
+            if (Files.isSymbolicLink(level) || Files.isSymbolicLink(backup)) {
+                throw new IOException("存档元数据是符号链接");
+            }
             var stamp = Stamp.read(level);
             var document = load(world);
             var info = metadata(document, world);
@@ -69,8 +66,23 @@ public final class WorldSave {
             if (settings.difficulty() != null || settings.difficultyLocked() != null) {
                 editDifficulty(document.data(), info, settings, changes);
             }
-            if (changes.isEmpty()) return;
-            replace(world, document, stamp, changes);
+            if (!changes.isEmpty()) replace(world, document, stamp, changes);
+            return null;
+        });
+    }
+
+    @FunctionalInterface
+    interface SaveEdit<T> {
+        T run() throws IOException;
+    }
+
+    static <T> T withSaveLock(Path world, SaveEdit<T> edit) throws IOException {
+        checkDirectory(world);
+        Path lockPath = world.resolve("session.lock");
+        if (Files.isSymbolicLink(lockPath)) throw new IOException("存档锁文件是符号链接");
+        try (var channel = Files.exists(lockPath, NOFOLLOW_LINKS) ? FileChannel.open(lockPath, WRITE, NOFOLLOW_LINKS) : null;
+             var lock = channel == null ? null : acquireLock(channel)) {
+            return edit.run();
         }
     }
 

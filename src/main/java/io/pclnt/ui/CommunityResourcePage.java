@@ -80,6 +80,7 @@ final class CommunityResourcePage {
     private final Consumer<CommunityResources.File> installPack;
     private final Consumer<Boolean> transferActive;
     private final TaskMonitor tasks;
+    private final ResourceFavorites favorites;
     private final ViewTransition details = new ViewTransition(new StackPane(), ViewTransition.Type.CONTENT);
     private final ComboBox<Origin> source = new ComboBox<>();
     private final ComboBox<String> loader = new ComboBox<>();
@@ -87,17 +88,21 @@ final class CommunityResourcePage {
     private final TextField query = field("搜索名称");
     private final ComboBox<String> version = new ComboBox<>();
     private final VBox results = new VBox(15);
-    private final java.util.Map<URI, Image> icons = new LinkedHashMap<>();
+    private final java.util.Map<URI, Task<Image>> icons = new LinkedHashMap<>(128, .75f, true);
     private final Node searchView;
+    private final DetailTitle titleBar;
     private Task<?> request;
     private boolean opened;
+    private boolean searchVisible = true;
     private boolean preparingSave;
+    private Path datapackWorld;
     private final Map<Kind, Path> lastFolders = new java.util.EnumMap<>(Kind.class);
 
     CommunityResourcePage(CommunityResources resources, Notifications notifications, HostServices links, Kind kind,
                           VanillaInstaller installer, Supplier<Instance> selectedInstance, Predicate<String> isolated,
                           Consumer<CommunityResources.File> installPack, Runnable importPack,
-                          Consumer<Boolean> transferActive, TaskMonitor tasks) {
+                          Consumer<Boolean> transferActive, TaskMonitor tasks, DetailTitle titleBar,
+                          ResourceFavorites favorites) {
         this.resources = resources;
         this.notifications = notifications;
         this.links = links;
@@ -108,6 +113,8 @@ final class CommunityResourcePage {
         this.installPack = installPack;
         this.transferActive = transferActive;
         this.tasks = tasks;
+        this.titleBar = titleBar;
+        this.favorites = favorites;
         var curse = new Origin("CurseForge", Source.CURSEFORGE);
         source.getItems().setAll(kind == Kind.WORLD ? List.of(curse)
                 : List.of(new Origin("全部", null), curse, new Origin("Modrinth", Source.MODRINTH)));
@@ -139,15 +146,28 @@ final class CommunityResourcePage {
         version.getEditor().addEventHandler(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == javafx.scene.input.KeyCode.ENTER && !version.isShowing()) search();
         });
-        var filters = new GridPane(12, 9);
+        var filters = new GridPane(0, 9);
         for (int index = 0; index < 2; index++) {
             filters.getRowConstraints().add(new javafx.scene.layout.RowConstraints(28));
         }
-        filters.addRow(0, label("名称", "card-text"), query, label("来源", "card-text"), source);
-        var versionAndLoader = new HBox(8, version);
+        double labelWidth = 44;
+        double gap = 50;
+        var leftColumn = new javafx.scene.layout.ColumnConstraints(216, 285, Double.MAX_VALUE,
+                Priority.ALWAYS, null, true);
+        var rightColumn = new javafx.scene.layout.ColumnConstraints(94, 114, Double.MAX_VALUE,
+                Priority.SOMETIMES, null, true);
+        // PageResource.xaml assigns 1.3* and 1.2* to the version and loader, versus 1* on the right.
+        var available = filters.widthProperty().subtract(labelWidth * 2 + gap);
+        leftColumn.prefWidthProperty().bind(available.multiply(2.5 / 3.5));
+        rightColumn.prefWidthProperty().bind(available.divide(3.5));
+        filters.addRow(0, filterLabel("名称"), query, new javafx.scene.layout.Region(), filterLabel("来源"), source);
+        filters.getColumnConstraints().addAll(new javafx.scene.layout.ColumnConstraints(labelWidth), leftColumn,
+                new javafx.scene.layout.ColumnConstraints(gap), new javafx.scene.layout.ColumnConstraints(labelWidth), rightColumn);
+        var versionAndLoader = new HBox(10, version);
         HBox.setHgrow(version, Priority.ALWAYS);
         if (kind == Kind.MOD) {
-            loader.setPrefWidth(133);
+            loader.setMinWidth(125);
+            loader.prefWidthProperty().bind(leftColumn.prefWidthProperty().multiply(1.2 / 2.5).subtract(10));
             versionAndLoader.getChildren().add(loader);
             var showLoader = javafx.beans.binding.Bindings.createBooleanBinding(() -> {
                 String text = version.getEditor().getText();
@@ -158,11 +178,10 @@ final class CommunityResourcePage {
                 if (!show) loader.getSelectionModel().selectFirst();
             });
         }
-        filters.addRow(1, label("版本", "card-text"), versionAndLoader, label("类型", "card-text"), category);
+        filters.addRow(1, filterLabel("版本"), versionAndLoader, new javafx.scene.layout.Region(), filterLabel("类型"), category);
+        query.setMinWidth(0);
         GridPane.setHgrow(query, Priority.ALWAYS);
         GridPane.setHgrow(versionAndLoader, Priority.ALWAYS);
-        source.setPrefWidth(118);
-        category.setPrefWidth(118);
         category.setDisable(kind == Kind.WORLD);
         var search = button("搜索", this::search);
         search.getStyleClass().add("accent-button");
@@ -174,18 +193,47 @@ final class CommunityResourcePage {
         searchForm.getStyleClass().add("resource-search-body");
         searchView = content(PclCard.fixedBody("搜索" + kind, searchForm), results);
         details.host().sceneProperty().addListener((observable, old, scene) -> {
-            if (scene != null && !opened) {
-                opened = true;
-                search();
-            }
+            if (scene != null) openSearchIfNeeded();
         });
         details.show(searchView);
     }
 
     Node view() { return details.host(); }
 
-    void refresh() {
+    void useDatapackWorld(Path world) { datapackWorld = world; }
+
+    void showSearch() {
+        searchVisible = true;
         details.show(searchView);
+        titleBar.clear();
+        if (details.host().getScene() != null) openSearchIfNeeded();
+    }
+
+    void showFavorite(ResourceFavorites.Entry entry, Runnable returnTo) {
+        searchVisible = false;
+        showProject(entry.project(), entry.kind(), new Filter("", "", ""), returnTo);
+    }
+
+    void showDatapackProject(Project project, String gameVersion, Runnable returnTo) {
+        searchVisible = false;
+        showProject(project, Kind.DATAPACK, new Filter("", gameVersion, ""), returnTo);
+    }
+
+    private void openSearchIfNeeded() {
+        if (!searchVisible || opened) return;
+        opened = true;
+        search();
+    }
+
+    private static Label filterLabel(String text) {
+        var caption = label(text, "card-text");
+        caption.setWrapText(false);
+        caption.setMinWidth(44);
+        return caption;
+    }
+
+    void refresh() {
+        showSearch();
         search();
     }
 
@@ -238,7 +286,8 @@ final class CommunityResourcePage {
         var projects = new VBox();
         projects.getStyleClass().add("resource-results-body");
         for (var project : page.items()) {
-            projects.getChildren().add(projectRow(project, () -> showProject(project, kind, filter, () -> details.show(searchView))));
+            projects.getChildren().add(projectRow(project, () -> showProject(project, kind, filter, this::showSearch),
+                    rowActions(project, kind)));
         }
         if (page.items().isEmpty()) projects.getChildren().add(label("没有找到匹配的项目。", "card-text"));
         for (var warning : page.warnings()) results.getChildren().add(label(warning, "help-hint"));
@@ -263,7 +312,6 @@ final class CommunityResourcePage {
         var filterCard = PclCard.fixedBody("", versionFilters);
         filterCard.setAccessibleText("筛选游戏版本");
         SettingsPage.bindVisible(filterCard, javafx.beans.binding.Bindings.isNotEmpty(versionFilters.getChildren()));
-        var back = TaskMonitor.iconButton("返回", "install-back", 14, returnTo);
         var website = button("转到 " + project.source(), () -> links.showDocument(project.website().toString()));
         website.setDisable(project.website() == null);
         var copy = button("复制名称", () -> {
@@ -275,9 +323,11 @@ final class CommunityResourcePage {
         var introActions = new javafx.scene.layout.FlowPane(20, 8, website);
         if (project.wiki() != null) introActions.getChildren().add(button("转到 MC 百科",
                 () -> links.showDocument(project.wiki().toString())));
-        introActions.getChildren().addAll(copy, back);
-        introActions.getChildren().stream().filter(node -> node != back)
+        introActions.getChildren().add(copy);
+        introActions.getChildren().stream()
                 .forEach(node -> ((ButtonBase) node).setMinWidth(140));
+        introActions.getChildren().addAll(translateButton(project, true), favoriteButton(project,
+                resourceKind == null ? Kind.MOD : resourceKind, true));
         var summary = projectSummary(project);
         summary.getStyleClass().add("resource-intro-summary");
         var intro = new VBox(8, summary, introActions);
@@ -285,9 +335,13 @@ final class CommunityResourcePage {
         var introCard = PclCard.fixedBody("", intro);
         introCard.setAccessibleText(project.localizedTitle());
         var projectView = content(introCard, alternate, filterCard, files);
+        titleBar.show(project.localizedTitle(), returnTo);
         details.show(projectView);
         load(files, () -> projectFileViews(resources.projectFiles(project), project.source(), resourceKind, filter), views -> {
-            Consumer<Project> openDependency = dependency -> showProject(dependency, null, filter, () -> details.show(projectView));
+            Consumer<Project> openDependency = dependency -> showProject(dependency, null, filter, () -> {
+                details.show(projectView);
+                titleBar.show(project.localizedTitle(), returnTo);
+            });
             displayFileView(project, views.initial(), views.alternate(), alternate, versionFilters, files, openDependency);
         });
     }
@@ -444,11 +498,8 @@ final class CommunityResourcePage {
     }
 
     private static javafx.scene.control.Button fileAction(String name, String icon, Runnable action) {
-        var button = button("", action);
+        var button = TaskMonitor.iconButton(name, icon, 14, action);
         button.getStyleClass().add("instance-row-action");
-        button.setAccessibleText(name);
-        button.setTooltip(new javafx.scene.control.Tooltip(name));
-        PclArtwork.setIcon(button, icon, 14);
         return button;
     }
 
@@ -475,9 +526,11 @@ final class CommunityResourcePage {
         preparingSave = true;
         transferActive.accept(true);
         var selected = selectedInstance.get();
+        var world = resourceKind == Kind.DATAPACK ? datapackWorld : null;
         var remembered = lastFolders.get(resourceKind);
         var prepare = new Task<Path>() {
             @Override protected Path call() throws Exception {
+                if (world != null) return io.pclnt.minecraft.WorldDatapacks.ensureFolder(world);
                 if (remembered != null && Files.isDirectory(remembered)) return remembered;
                 var folder = ResourceDestination.suggestedFolder(installer, selected, resourceKind, file, isolated);
                 Files.createDirectories(folder);
@@ -485,10 +538,10 @@ final class CommunityResourcePage {
             }
         };
         prepare.setOnSucceeded(event -> {
-            destinationReady(file, resourceKind, prepare.getValue(), false);
+            destinationReady(file, resourceKind, prepare.getValue(), false, world);
         });
         prepare.setOnFailed(event -> {
-            destinationReady(file, resourceKind, null, true);
+            destinationReady(file, resourceKind, null, true, world);
         });
         prepare.setOnCancelled(event -> {
             preparingSave = false;
@@ -497,19 +550,24 @@ final class CommunityResourcePage {
         Thread.startVirtualThread(prepare);
     }
 
-    private void destinationReady(CommunityResources.File file, Kind resourceKind, Path folder, boolean failed) {
+    private void destinationReady(CommunityResources.File file, Kind resourceKind, Path folder, boolean failed, Path world) {
         boolean started = false;
         try {
             if (details.host().getScene() == null) return;
+            if (world != null && !world.equals(datapackWorld)) return;
+            if (world != null && failed) {
+                notifications.post("无法打开此存档的数据包文件夹。", Notifications.Kind.ERROR);
+                return;
+            }
             if (failed) notifications.post("无法读取实例目录，请手动选择保存位置。", Notifications.Kind.INFO);
-            started = chooseDestination(file, resourceKind, folder);
+            started = chooseDestination(file, resourceKind, folder, world == null);
         } finally {
             preparingSave = false;
             if (!started) transferActive.accept(false);
         }
     }
 
-    private boolean chooseDestination(CommunityResources.File file, Kind resourceKind, Path folder) {
+    private boolean chooseDestination(CommunityResources.File file, Kind resourceKind, Path folder, boolean remember) {
         var picker = new FileChooser();
         picker.setTitle("选择保存位置");
         if (folder != null && Files.isDirectory(folder)) picker.setInitialDirectory(folder.toFile());
@@ -521,7 +579,7 @@ final class CommunityResourcePage {
         var output = picker.showSaveDialog(details.host().getScene().getWindow());
         if (output == null) return false;
         var target = output.toPath().toAbsolutePath().normalize();
-        lastFolders.put(resourceKind, target.getParent());
+        if (remember) lastFolders.put(resourceKind, target.getParent());
         if (Files.exists(target)) {
             notifications.post("目标文件已存在，请选择其他文件名。", Notifications.Kind.ERROR);
             return false;
@@ -546,7 +604,7 @@ final class CommunityResourcePage {
         return true;
     }
 
-    private javafx.scene.control.Button projectRow(Project project, Runnable action) {
+    Node projectRow(Project project, Runnable action, Node... actions) {
         var row = button("", action);
         row.setAccessibleText(project.title());
         row.getStyleClass().setAll("button", "help-row", "resource-project");
@@ -554,7 +612,98 @@ final class CommunityResourcePage {
         row.setMinWidth(0);
         row.setMaxWidth(Double.MAX_VALUE);
         row.setGraphic(projectSummary(project));
-        return row;
+        if (actions.length == 0) return row;
+        row.getStyleClass().add("resource-project-actions");
+        if (actions.length > 2) row.getStyleClass().add("resource-project-favorite-actions");
+        var controls = new HBox(2, actions);
+        controls.setAlignment(Pos.CENTER_RIGHT);
+        controls.setMaxSize(javafx.scene.layout.Region.USE_PREF_SIZE, javafx.scene.layout.Region.USE_PREF_SIZE);
+        StackPane.setAlignment(controls, Pos.CENTER_RIGHT);
+        StackPane.setMargin(controls, new javafx.geometry.Insets(0, 5, 0, 0));
+        var wrapper = new StackPane(row, controls);
+        UiMotion.revealActions(wrapper, controls, 18, 42, 72);
+        return wrapper;
+    }
+
+    private Node[] rowActions(Project project, Kind kind) {
+        return new Node[]{translateButton(project, false), favoriteButton(project, kind, false)};
+    }
+
+    private javafx.scene.control.Button favoriteButton(Project project, Kind kind, boolean text) {
+        var heart = text ? button("收藏", () -> {})
+                : TaskMonitor.iconButton("收藏", "lucide/heart", 16, () -> {});
+        if (text) heart.getStyleClass().add("pcl-icon-text-button");
+        Runnable update = () -> PclArtwork.setIcon(heart,
+                favorites.contains(project) ? "lucide/heart-filled" : "lucide/heart", 16);
+        javafx.collections.ListChangeListener<ResourceFavorites.Folder> listener = change -> update.run();
+        heart.sceneProperty().addListener((observable, previous, scene) -> {
+            if (previous != null) favorites.folders().removeListener(listener);
+            if (scene != null) {
+                favorites.folders().addListener(listener);
+                update.run();
+            }
+        });
+        update.run();
+        heart.setOnAction(event -> {
+            var menu = new javafx.scene.control.ContextMenu();
+            for (var folder : favorites.folders()) {
+                boolean present = folder.contains(project);
+                var action = new javafx.scene.control.MenuItem((present ? "从 " : "添加到 ") + folder.name()
+                        + (present ? " 移除" : ""));
+                action.setGraphic(menuIcon(present ? "lucide/heart-filled" : "lucide/heart"));
+                action.setOnAction(ignored -> {
+                    try {
+                        favorites.toggle(folder, kind, project);
+                        notifications.post((present ? "已取消收藏 " : "已收藏 ") + project.localizedTitle(), Notifications.Kind.SUCCESS);
+                    } catch (IOException failure) {
+                        notifications.post(VanillaDownloadPage.message(failure), Notifications.Kind.ERROR);
+                    }
+                });
+                menu.getItems().add(action);
+            }
+            menu.show(heart, javafx.geometry.Side.BOTTOM, 0, 1);
+        });
+        return heart;
+    }
+
+    private static Node menuIcon(String graphic) {
+        var icon = new Label();
+        PclArtwork.setIcon(icon, graphic, 14);
+        return icon;
+    }
+
+    javafx.scene.control.Button translateButton(Project project, boolean text) {
+        var action = text ? button("翻译简介", () -> {})
+                : TaskMonitor.iconButton("翻译简介", "lucide/earth", 16, () -> {});
+        if (text) {
+            action.getStyleClass().add("pcl-icon-text-button");
+            PclArtwork.setIcon(action, "lucide/earth", 16);
+        }
+        action.setDisable(project.summary().isBlank());
+        action.setOnAction(event -> {
+            action.setDisable(true);
+            notifications.post("正在翻译 " + project.localizedTitle() + " 的简介", Notifications.Kind.INFO);
+            var translation = new Task<java.util.Optional<String>>() {
+                @Override protected java.util.Optional<String> call() throws Exception {
+                    return resources.translateDescription(project);
+                }
+            };
+            translation.setOnSucceeded(done -> {
+                action.setDisable(false);
+                if (action.getScene() == null) return;
+                var chinese = translation.getValue();
+                PclDialogs.message(action, "简介翻译", chinese.map(summary ->
+                        "原文：" + project.summary() + "\n译文：" + summary)
+                        .orElse("当前资源的简介暂无译文"), chinese.isEmpty());
+            });
+            translation.setOnFailed(done -> {
+                action.setDisable(false);
+                if (action.getScene() != null) PclDialogs.message(action, "简介翻译失败",
+                        VanillaDownloadPage.message(translation.getException()), true);
+            });
+            Thread.startVirtualThread(translation);
+        });
+        return action;
     }
 
     private HBox projectSummary(Project project) {
@@ -640,21 +789,33 @@ final class CommunityResourcePage {
     private void loadIcon(ImageView view, List<URI> sources, int index) {
         if (index >= sources.size()) return;
         var uri = sources.get(index);
-        var image = icons.computeIfAbsent(uri, key -> new Image(key.toASCIIString(), 100, 100, true, true, true));
-        if (icons.size() > 128) icons.remove(icons.keySet().iterator().next());
-        var show = new javafx.beans.value.ChangeListener<Number>() {
-            @Override public void changed(javafx.beans.value.ObservableValue<? extends Number> observable, Number old, Number value) {
-                if (value.doubleValue() < 1 && !image.isError()) return;
-                image.progressProperty().removeListener(this);
-                if (image.isError()) loadIcon(view, sources, index + 1);
-                else {
-                    view.setImage(image);
-                    view.setSmooth(true);
+        var loader = icons.computeIfAbsent(uri, key -> {
+            var task = new Task<Image>() {
+                @Override protected Image call() throws Exception {
+                    return ResourceIconImages.decode(resources.iconBytes(key));
                 }
-            }
-        };
-        image.progressProperty().addListener(show);
-        show.changed(image.progressProperty(), 0, image.getProgress());
+            };
+            task.setOnFailed(event -> icons.remove(key, task));
+            Thread.startVirtualThread(task);
+            return task;
+        });
+        if (icons.size() > 128) icons.remove(icons.keySet().iterator().next());
+        var finished = javafx.concurrent.WorkerStateEvent.WORKER_STATE_SUCCEEDED;
+        var failed = javafx.concurrent.WorkerStateEvent.WORKER_STATE_FAILED;
+        if (loader.getState() == javafx.concurrent.Worker.State.SUCCEEDED) view.setImage(loader.getValue());
+        else if (loader.getState() == javafx.concurrent.Worker.State.FAILED) loadIcon(view, sources, index + 1);
+        else {
+            javafx.event.EventHandler<javafx.concurrent.WorkerStateEvent> apply = new javafx.event.EventHandler<>() {
+                @Override public void handle(javafx.concurrent.WorkerStateEvent event) {
+                    loader.removeEventHandler(finished, this);
+                    loader.removeEventHandler(failed, this);
+                    if (event.getEventType() == finished) view.setImage(loader.getValue());
+                    else loadIcon(view, sources, index + 1);
+                }
+            };
+            loader.addEventHandler(finished, apply);
+            loader.addEventHandler(failed, apply);
+        }
     }
 
     private static javafx.scene.control.Button row(String title, String summary, Node icon, Runnable action) {

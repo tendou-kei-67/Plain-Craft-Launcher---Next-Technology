@@ -1,6 +1,7 @@
 package io.pclnt.ui;
 
 import io.pclnt.minecraft.WorldSave;
+import io.pclnt.minecraft.WorldDatapacks;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -40,6 +41,7 @@ final class InstanceSaveInfoPage {
     private final BooleanSupplier busy;
     private final Consumer<Boolean> writing;
     private final SimpleBooleanProperty updating = new SimpleBooleanProperty();
+    private final SimpleBooleanProperty datapacksSupported = new SimpleBooleanProperty();
     private final VBox cards = new VBox(15);
     private Task<WorldSave.Info> load;
 
@@ -53,11 +55,22 @@ final class InstanceSaveInfoPage {
     }
 
     Node view(Runnable back, Runnable openFolder) {
+        return view(back, openFolder, null);
+    }
+
+    Node view(Runnable back, Runnable openFolder, Runnable openDatapacks) {
         var heading = new HBox(8, iconButton("返回存档列表", "install-back", 15, back),
                 label(world.getFileName().toString(), "card-title"),
                 iconButton("打开存档文件夹", "lucide/folder-open", 16, openFolder),
                 iconButton("刷新存档信息", "help-refresh", 14, this::refresh));
         heading.setAlignment(Pos.CENTER_LEFT);
+        if (openDatapacks != null) {
+            var datapacks = VanillaDownloadPage.button("数据包", openDatapacks);
+            PclArtwork.setIcon(datapacks, "lucide/file-archive", 15);
+            SettingsPage.bindVisible(datapacks, datapacksSupported);
+            datapacks.disableProperty().bind(updating);
+            heading.getChildren().add(datapacks);
+        }
         refresh();
         return content(heading, cards);
     }
@@ -65,6 +78,7 @@ final class InstanceSaveInfoPage {
     private void refresh() {
         if (updating.get()) return;
         if (load != null) load.cancel();
+        datapacksSupported.set(false);
         cards.getChildren().setAll(PclCard.fixed("存档详细信息", new PclLoading("正在读取存档信息……")));
         var task = new Task<WorldSave.Info>() {
             @Override protected WorldSave.Info call() throws Exception { return WorldSave.read(world); }
@@ -81,6 +95,7 @@ final class InstanceSaveInfoPage {
     }
 
     private void showInfo(WorldSave.Info info) {
+        datapacksSupported.set(info.dataVersion() != null && info.dataVersion() >= WorldDatapacks.FIRST_DATA_VERSION);
         cards.getChildren().clear();
         if (info.recoveredFromBackup()) {
             cards.getChildren().add(label("无法读取 level.dat，当前显示 level.dat_old 中的备份信息。", "card-text"));

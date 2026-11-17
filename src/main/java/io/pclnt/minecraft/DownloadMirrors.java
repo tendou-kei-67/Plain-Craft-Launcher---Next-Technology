@@ -58,6 +58,13 @@ final class DownloadMirrors {
         if (official.getHost().equalsIgnoreCase("api.modrinth.com") && path.endsWith("/version")) {
             return List.of(official, preferred);
         }
+        // Mojang's old manifests retain the preceding host names for the same content-addressed files.
+        if (official.getHost().equalsIgnoreCase("launcher.mojang.com") && path.startsWith("/v1/objects/")) {
+            return List.of(preferred, URI.create("https://piston-data.mojang.com" + path + query), official);
+        }
+        if (official.getHost().equalsIgnoreCase("launchermeta.mojang.com") && path.startsWith("/v1/packages/")) {
+            return List.of(preferred, URI.create("https://piston-meta.mojang.com" + path + query), official);
+        }
         return List.of(preferred, official);
     }
 

@@ -53,6 +53,8 @@ final class ViewTransition {
         return host;
     }
 
+    Node current() { return requested; }
+
     void show(Node next) {
         if (requested == next) {
             return;

@@ -1,7 +1,6 @@
 package io.pclnt.ui;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonParseException;
 import io.pclnt.minecraft.GameLaunch;
 import io.pclnt.minecraft.PlayerProfile;
 import java.io.IOException;
@@ -44,7 +43,8 @@ final class PlayerProfiles {
                 throw new IOException("档案文件为空");
             }
             state = loaded;
-        } catch (IOException | JsonParseException | IllegalArgumentException failure) {
+        } catch (IOException | RuntimeException failure) {
+            // Gson can wrap record constructor validation failures in RuntimeException.
             readFailed = true;
             notifications.post("无法读取离线档案。原档案文件已保留。", Notifications.Kind.ERROR);
         }

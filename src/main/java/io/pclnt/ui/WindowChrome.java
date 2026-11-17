@@ -166,6 +166,7 @@ final class WindowChrome {
     }
 
     private Cursor edgeAt(MouseEvent event) {
+        if (!stage.isResizable()) return Cursor.DEFAULT;
         double x = event.getSceneX();
         double y = event.getSceneY();
         double right = stage.getScene().getWidth() - x;

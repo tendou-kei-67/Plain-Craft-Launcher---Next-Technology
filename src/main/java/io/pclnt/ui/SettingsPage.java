@@ -47,7 +47,7 @@ final class SettingsPage {
             new Choice(11, "中上 (保持长宽比)"), new Choice(2, "居中 (保持长宽比)"), new Choice(12, "中下 (保持长宽比)"),
             new Choice(6, "右上 (保持长宽比)"), new Choice(10, "右中 (保持长宽比)"), new Choice(8, "右下 (保持长宽比)"));
     private static final List<Choice> COLOR_MODES = List.of(
-            new Choice(0, "浅色"), new Choice(1, "深色"), new Choice(2, "跟随系统"));
+            new Choice(0, "浅色"), new Choice(1, "深色"), new Choice(2, "跟随系统"), new Choice(3, "跟随时间"));
     private static final List<Choice> THEME_COLORS = List.of(
             new Choice(0, "天空蓝"), new Choice(1, "龙猫蓝"), new Choice(2, "死机蓝"));
 
@@ -145,10 +145,28 @@ final class SettingsPage {
                 new Choice(2, "游戏启动后隐藏，游戏退出后自动关闭"),
                 new Choice(3, "游戏启动后隐藏，游戏退出后重新打开"),
                 new Choice(4, "游戏启动后最小化"), new Choice(5, "游戏启动后仍保持不变")));
+        var priority = combo(settings.launchPriority, List.of(
+                new Choice(4, "实时（使游戏以最高优先级运行，谨慎使用，可能严重影响系统运行）"),
+                new Choice(3, "极高（谨慎使用，可能严重影响其他程序运行）"),
+                new Choice(0, "高（优先保证游戏运行，游戏性能更佳，但可能造成其他程序卡顿）"),
+                new Choice(1, "中（平衡）"),
+                new Choice(2, "低（优先保证其他程序运行，但可能让游戏卡顿，适合挂机时使用）")));
+        priority.setAccessibleText("进程优先级");
+        var authentication = combo(settings.microsoftAuthType, List.of(
+                new Choice(0, "Web 账户管理器（暂时强制设备代码流）"), new Choice(1, "设备代码流")));
+        authentication.setAccessibleText("正版验证方式");
+        authentication.setDisable(true);
+        var authRow = field("正版验证方式", authentication);
+        javafx.scene.control.Tooltip.install(authRow, new javafx.scene.control.Tooltip("与 PCL-CE 一致，目前固定使用设备代码流验证。"));
+        var ip = combo(settings.launchIpStack, List.of(new Choice(0, "IPv4 优先"),
+                new Choice(1, "Java 默认"), new Choice(2, "IPv6 优先")));
+        ip.setAccessibleText("IP 协议偏好");
+        ip.setTooltip(new javafx.scene.control.Tooltip("通过 Java 虚拟机参数选择 Minecraft 的 IP 协议偏好。"));
         var arguments = PclCard.fixed("启动选项", field("默认实例隔离", isolation),
                 windowTitleField(settings.launchTitle, null),
                 versionInfoField(settings.launchInfo, ""),
-                field("启动器可见性", visibility), field("窗口大小", window, dimensions));
+                field("启动器可见性", visibility), field("进程优先级", priority),
+                field("窗口大小", window, dimensions), authRow, field("IP 协议偏好", ip));
 
         var allocation = radio(settings.launchMemoryMode, List.of(new Choice(0, "自动配置"), new Choice(1, "自定义")));
         var custom = slider("最大内存（-Xmx）", settings.launchMemory, 49, 1, value -> gb(LaunchOptions.customGigabytes(value)));
@@ -201,19 +219,13 @@ final class SettingsPage {
         optimizeMemory.setTooltip(memoryOptimizationTooltip());
         var memory = PclCard.fixed("内存分配", allocation, custom, initial, optimizeMemory, memoryBar, memoryLabels);
 
-        var java = text(settings.launchJava, "自动选择");
-        var browse = button("选择 Java", () -> {
-            var chooser = new FileChooser();
-            chooser.setTitle("选择 Java 可执行文件");
-            var selected = chooser.showOpenDialog(owner.getScene().getWindow());
-            if (selected != null) settings.launchJava.set(selected.getAbsolutePath());
-        });
         var collector = combo(settings.launchCollector, List.of(new Choice(0, "尽量使用 ZGC"),
                 new Choice(1, "尽量使用分代 ZGC"), new Choice(2, "标准 G1GC"), new Choice(4, "调优 G1GC"),
                 new Choice(3, "不指定（可自定义）")));
         var advanced = PclCard.foldable("高级选项", new VBox(10,
                 field("Java 虚拟机参数", text(settings.launchJvmArgs, "默认")),
-                field("游戏参数", text(settings.launchGameArgs, "")), field("Java 列表", java, browse),
+                field("游戏参数", text(settings.launchGameArgs, "")),
+                JavaPicker.field("Java 列表", "自动选择", settings.launchJava, settings.gameFolders::active),
                 preLaunchField(settings.preLaunchCommand, settings.preLaunchWait),
                 field("内存管理", collector), check("锁定内存分配（-Xms = -Xmx）", settings.launchLockMemory),
                 label("版本独立设置中还有更多高级选项可供调整。", "help-hint")), false);
@@ -270,7 +282,9 @@ final class SettingsPage {
         var basic = PclCard.fixed("基础",
                 slider("不透明度", settings.windowOpacity, 600, 10, value -> Math.round(40 + value * .1) + "%"),
                 themeRow(),
-                check("打开启动器时显示 PCL 图标", settings.startupLogo));
+                check("打开启动器时显示 PCL 图标", settings.startupLogo),
+                check("锁定启动器大小", settings.lockWindowSize),
+                check("在游戏启动时显示“你知道吗”", settings.showLaunchingHint));
         var background = background();
         var title = title();
         var homepage = homepage();

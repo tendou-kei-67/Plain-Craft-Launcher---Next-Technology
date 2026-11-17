@@ -34,6 +34,7 @@ import javafx.stage.Stage;
 public final class LauncherController {
     @FXML private BorderPane frame;
     @FXML private StackPane titleBar;
+    private DetailTitle detailTitle;
     @FXML private HBox titleNavigation;
     @FXML private Label brand;
     @FXML private StackPane pageHost;
@@ -69,6 +70,8 @@ public final class LauncherController {
     private Runnable openJavaDownloads;
     private final java.util.EnumMap<CommunityResources.Kind, ToggleButton> resourceTabs =
             new java.util.EnumMap<>(CommunityResources.Kind.class);
+    private final java.util.EnumMap<CommunityResources.Kind, CommunityResourcePage> resourcePages =
+            new java.util.EnumMap<>(CommunityResources.Kind.class);
     private Node downloadsView;
     private final AppearanceOptions appearanceOptions = new AppearanceOptions();
     private WindowAppearance appearance;
@@ -81,6 +84,7 @@ public final class LauncherController {
     private CommunityResources communityResources;
     private GameLaunch gameLaunch;
     private HttpClient minecraftClient;
+    private ResourceFavorites resourceFavorites;
     private AccountPane accounts;
     private VanillaInstaller.Instance selectedInstance;
     private boolean gameRunning;
@@ -96,15 +100,16 @@ public final class LauncherController {
         installArtwork();
         themeMode = new ThemeMode(appearanceOptions, frame, darkTheme);
         notifications = new Notifications(frame, notificationButton);
-        tasks = new TaskMonitor(appearanceOptions, this::showDownloads);
+        tasks = new TaskMonitor(appearanceOptions);
         minecraftClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(12))
                 .followRedirects(HttpClient.Redirect.NORMAL).build();
         communityResources = new CommunityResources(minecraftClient,
                 System.getenv().getOrDefault("PCLNT_CURSEFORGE_API_KEY", ""));
+        resourceFavorites = new ResourceFavorites(appearanceOptions.directory, notifications);
         bindGameFolder(appearanceOptions.gameFolders.active());
         appearance = new WindowAppearance(appearanceOptions, brand, titleNavigation, pageHost, notifications);
         var profiles = new PlayerProfiles(appearanceOptions.directory, appearanceOptions.offlineNames.get(), notifications);
-        accounts = new AccountPane(new ViewTransition(loginHost, ViewTransition.Type.LOGIN), profiles, notifications,
+        accounts = new AccountPane(new ViewTransition(loginHost, ViewTransition.Type.LOGIN), profiles, appearanceOptions, notifications,
                 this::updateLaunchButtons, address -> links.showDocument(address.toASCIIString()), () -> gameRunning);
         accounts.show();
         UiMotion.installButtons(frame, darkTheme);
@@ -118,7 +123,7 @@ public final class LauncherController {
     private void bindGameFolder(Path folder) {
         vanillaInstaller = new VanillaInstaller(minecraftClient, folder);
         vanillaDownloads = new VanillaDownloadPage(minecraftClient, vanillaInstaller, appearanceOptions, notifications, this::selectInstance,
-                () -> repairing || writingResource, tasks);
+                () -> repairing || writingResource, tasks, this::showInstances);
         modpacks = new ModpackImport(frame, new io.pclnt.minecraft.ModpackInstaller(minecraftClient, vanillaInstaller, communityResources),
                 communityResources, notifications, this::instanceBusy, this::setWritingResource, instance -> {
                     appearanceOptions.initializeIsolation(instance.id(), true);
@@ -127,6 +132,7 @@ public final class LauncherController {
         gameLaunch = new GameLaunch(vanillaInstaller);
         downloadsView = null;
         resourceTabs.clear();
+        resourcePages.clear();
         openJavaDownloads = null;
     }
 
@@ -150,10 +156,14 @@ public final class LauncherController {
         PclArtwork.setIcon(moreTab, "more", 14.9);
         PclArtwork.setIcon(minimizeButton, "minimize", 13);
         PclArtwork.setIcon(closeButton, "close", 14.4);
+        UiMotion.installIconPress(minimizeButton);
+        UiMotion.installIconPress(closeButton);
+        UiMotion.installIconPress(notificationButton);
     }
 
     public void showWindow(Stage stage, HostServices links) {
         this.links = links;
+        detailTitle = new DetailTitle(titleBar, brand, titleNavigation);
         themeMode.watch(stage);
         appearance.watch(stage);
         customHome = new CustomHome(appearanceOptions, launchPane, links);
@@ -172,6 +182,8 @@ public final class LauncherController {
         }
         customHome.show();
         window = new WindowChrome(stage, frame, titleBar);
+        stage.setResizable(!appearanceOptions.lockWindowSize.get());
+        appearanceOptions.lockWindowSize.addListener((observable, old, locked) -> stage.setResizable(!locked));
         window.open();
         if (appearanceOptions.startupLogo.get()) {
             var splash = new ImageView(stage.getIcons().getLast());
@@ -204,7 +216,7 @@ public final class LauncherController {
         SettingsPage.bindVisible(versionButtons, appearanceOptions.visible(AppearanceOptions.VERSION));
         titleNavigation.visibleProperty().bind(downloadTab.visibleProperty().or(multiplayerTab.visibleProperty())
                 .or(settingsTab.visibleProperty()).or(moreTab.visibleProperty()).or(serverTab.visibleProperty())
-                .or(toolsTab.visibleProperty()));
+                .or(toolsTab.visibleProperty()).and(detailTitle.mainNavigationVisibleProperty()));
         stage.getScene().addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.F12) {
                 appearanceOptions.forceShow.set(!appearanceOptions.forceShow.get());
@@ -233,22 +245,36 @@ public final class LauncherController {
             var details = new ViewTransition(new StackPane(), ViewTransition.Type.CONTENT);
             var group = new ToggleGroup();
             var javaEdition = SidebarItem.page("原版游戏", "download-vanilla", 17, group,
-                    () -> details.show(vanillaDownloads.view()));
+                    () -> {
+                        clearDatapackWorld();
+                        detailTitle.clear();
+                        details.show(vanillaDownloads.view());
+                    });
             var bedrockPage = new BedrockDownloadPage(links, notifications, tasks);
-            var bedrock = SidebarItem.page("基岩版", "toolbox", 16, group, () -> details.show(bedrockPage.view()));
+            var bedrock = SidebarItem.page("基岩版", "toolbox", 16, group, () -> {
+                clearDatapackWorld();
+                detailTitle.clear();
+                details.show(bedrockPage.view());
+            });
             var heading = label("社区资源", "download-resource-heading");
             var navigation = sidebar(javaEdition, bedrock, heading);
             navigation.getStyleClass().add("pcl-sidebar");
-            var resourcePages = new java.util.EnumMap<CommunityResources.Kind, CommunityResourcePage>(CommunityResources.Kind.class);
             var folderInstaller = vanillaInstaller;
             var folderModpacks = modpacks;
+            java.util.function.Consumer<Boolean> transfer = active -> communityTransfers += active ? 1 : -1;
+            java.util.function.Function<CommunityResources.Kind, CommunityResourcePage> pageFor = kind ->
+                    resourcePages.computeIfAbsent(kind,
+                            key -> new CommunityResourcePage(communityResources, notifications, links, key,
+                                    folderInstaller, () -> folderInstaller == vanillaInstaller ? selectedInstance : null,
+                                    id -> appearanceOptions.isolated(folderInstaller.root(), id),
+                                    folderModpacks::download, folderModpacks::open, transfer, tasks, detailTitle, resourceFavorites));
             for (var kind : CommunityResources.Kind.values()) {
-                Runnable open = () -> details.show(resourcePages.computeIfAbsent(kind,
-                        key -> new CommunityResourcePage(communityResources, notifications, links, key,
-                                folderInstaller, () -> folderInstaller == vanillaInstaller ? selectedInstance : null,
-                                id -> appearanceOptions.isolated(folderInstaller.root(), id),
-                                folderModpacks::download, folderModpacks::open,
-                                active -> communityTransfers += active ? 1 : -1, tasks)).view());
+                Runnable open = () -> {
+                    clearDatapackWorld();
+                    var resources = pageFor.apply(kind);
+                    resources.showSearch();
+                    details.show(resources.view());
+                };
                 var item = SidebarItem.page(kind.toString(), "download-" + kind.name().toLowerCase(java.util.Locale.ROOT),
                         17, group, open, "刷新", "help-refresh", 13, () -> {
                             var resource = resourcePages.get(kind);
@@ -258,8 +284,21 @@ public final class LauncherController {
                 navigation.getChildren().add(item);
                 resourceTabs.put(kind, item.toggle());
             }
+            var favorites = new CommunityFavoritesPage(resourceFavorites, communityResources, pageFor, (entry, returnView) -> {
+                var resources = pageFor.apply(entry.kind());
+                resources.showFavorite(entry, () -> {
+                    detailTitle.clear();
+                    details.show(returnView);
+                });
+                details.show(resources.view());
+            }, notifications, tasks, transfer);
+            var favoritesLink = SidebarItem.page("收藏夹", "lucide/heart", 17, group, () -> {
+                clearDatapackWorld();
+                detailTitle.clear();
+                details.show(favorites.view());
+            }, "刷新", "help-refresh", 13, favorites::refresh);
+            navigation.getChildren().add(favoritesLink);
             openJavaDownloads = javaEdition.toggle()::fire;
-            navigation.getChildren().add(SidebarItem.action("任务管理", "task-manager", 17, this::showTasks));
             openJavaDownloads.run();
             downloadsView = section(navigation, details.host());
         }
@@ -267,7 +306,8 @@ public final class LauncherController {
     }
 
     private void showTasks() {
-        select(Page.TASKS, downloadTab, tasks.view());
+        select(Page.TASKS, toolsTab, tasks.view());
+        detailTitle.show("任务管理", this::showTools);
     }
 
     @FXML
@@ -295,7 +335,7 @@ public final class LauncherController {
     @FXML
     private void showTools() {
         if (toolbox == null) {
-            toolbox = new ToolboxPage(appearanceOptions, notifications, links, frame, tasks);
+            toolbox = new ToolboxPage(appearanceOptions, notifications, links, frame, tasks, this::showTasks);
         }
         select(Page.TOOLS, toolsTab, toolbox.view());
     }
@@ -318,8 +358,9 @@ public final class LauncherController {
         select(Page.INSTANCES, launchTab, new InstanceSelectionPage(vanillaInstaller, appearanceOptions,
                 selectedInstance, this::chooseInstance, this::openInstanceSettings, this::instanceRemoved,
                 this::instanceBusy, this::setWritingResource, links, notifications, frame,
-                this::showLaunch, this::openVanillaDownloads, () -> modpacks.open(), this::activateGameFolder,
-                () -> vanillaInstaller).view());
+                this::openVanillaDownloads, () -> modpacks.open(), this::activateGameFolder,
+                () -> vanillaInstaller, tasks).view());
+        detailTitle.show("版本选择", this::showLaunch);
     }
 
     private void chooseInstance(VanillaInstaller.Instance instance) {
@@ -336,11 +377,31 @@ public final class LauncherController {
         if (instance == null || page == Page.INSTANCE_SETTINGS) {
             return;
         }
+        Runnable back = page == Page.INSTANCES ? this::showInstances : this::showLaunch;
+        String caption = "版本设置 - " + instance.id();
         select(Page.INSTANCE_SETTINGS, launchTab,
                 new InstanceSettingsPage(instance, vanillaInstaller, appearanceOptions, links, notifications,
                         frame, this::repairInstance, this::instanceBusy, this::openResourceDownloads, this::setWritingResource,
-                        () -> gameLaunch.supportsQuickPlay(instance), world -> playWorld(instance, world))
+                        () -> gameLaunch.supportsQuickPlay(instance), world -> playWorld(instance, world), this::openWorldDatapacks,
+                        new InstanceResourcesPage.DatapackServices(communityResources,
+                                () -> vanillaInstaller.describe(instance).gameVersion(), tasks), (world, project) -> {
+                            var settings = pages.current();
+                            String gameVersion = "";
+                            try {
+                                gameVersion = vanillaInstaller.describe(instance).gameVersion();
+                            } catch (IOException ignored) {
+                                // The project can still open when the instance metadata is unavailable.
+                            }
+                            openWorldDatapacks(world);
+                            var datapacks = resourcePages.get(CommunityResources.Kind.DATAPACK);
+                            datapacks.showDatapackProject(project, gameVersion, () -> {
+                                datapacks.showSearch();
+                                select(Page.INSTANCE_SETTINGS, launchTab, settings);
+                                detailTitle.show(caption, back);
+                            });
+                        })
                         .view(this::showLaunch, this::showInstances));
+        detailTitle.show(caption, back);
     }
 
     private void instanceRemoved(VanillaInstaller.Instance instance) {
@@ -380,6 +441,17 @@ public final class LauncherController {
     private void openResourceDownloads(CommunityResources.Kind kind) {
         showDownloads();
         resourceTabs.get(kind).fire();
+    }
+
+    private void openWorldDatapacks(java.nio.file.Path world) {
+        var kind = CommunityResources.Kind.DATAPACK;
+        openResourceDownloads(kind);
+        resourcePages.get(kind).useDatapackWorld(world);
+    }
+
+    private void clearDatapackWorld() {
+        var datapacks = resourcePages.get(CommunityResources.Kind.DATAPACK);
+        if (datapacks != null) datapacks.useDatapackWorld(null);
     }
 
     private void finishRepair(String message, Notifications.Kind kind) {
@@ -502,7 +574,12 @@ public final class LauncherController {
             }
 
             @Override protected void succeeded() { rememberSession(); }
-            @Override protected void failed() { rememberSession(); }
+            @Override protected void failed() {
+                rememberSession();
+                if (getException() instanceof io.pclnt.minecraft.MicrosoftLogin.ReauthenticationRequiredException) {
+                    accounts.expireMicrosoftSession(profile, microsoftSession);
+                }
+            }
 
             private void rememberSession() {
                 if (validated != null) accounts.session(profile, validated);
@@ -516,14 +593,12 @@ public final class LauncherController {
         var loginMethod = label("登录方式  " + (microsoftSession != null ? "正版登录"
                 : session != null ? "第三方登录" : "离线登录"), "version-caption");
         var progressText = label("等待启动", "version-caption");
-        var launchProgress = new javafx.scene.control.ProgressBar();
-        launchProgress.setMaxWidth(Double.MAX_VALUE);
-        launchProgress.progressProperty().bind(task.progressProperty());
-        launchProgress.setAccessibleText("启动进度");
+        var launchProgress = new LaunchProgress(task.progressProperty());
         progressText.textProperty().bind(Bindings.createStringBinding(() -> task.getProgress() < 0 ? "等待启动"
                 : String.format(java.util.Locale.ROOT, "启动进度  %.0f%%", task.getProgress() * 100), task.progressProperty()));
         var launching = new VBox(9, loading, label("正在启动游戏", "card-title"), loginMethod, stageLabel,
-                progressText, launchProgress);
+                launchProgress, progressText);
+        if (appearanceOptions.showLaunchingHint.get()) LaunchProgress.trivia().ifPresent(launching.getChildren()::add);
         launching.setAlignment(Pos.CENTER);
         launching.getStyleClass().add("launch-loading");
         launching.setOpacity(0);
@@ -600,6 +675,8 @@ public final class LauncherController {
             return;
         }
         page = target;
+        if (target != Page.DOWNLOAD) clearDatapackWorld();
+        if (detailTitle != null) detailTitle.clear();
         taskPageOpen.set(target == Page.TASKS);
         if (view != launchPane) {
             UiMotion.installButtons(view, darkTheme);

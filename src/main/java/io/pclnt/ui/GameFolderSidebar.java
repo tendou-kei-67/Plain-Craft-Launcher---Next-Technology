@@ -34,13 +34,16 @@ final class GameFolderSidebar {
     private final Consumer<Path> activate;
     private final Runnable importPack;
     private final Supplier<VanillaInstaller> activeInstaller;
+    private final javafx.beans.value.ObservableStringValue bedrockAddress;
+    private final Runnable showBedrock;
     private final VBox rows = LauncherController.sidebar();
     private final ScrollPane view = new SpringScrollPane(rows);
     private ToggleGroup group;
 
     GameFolderSidebar(AppearanceOptions options, Parent owner, Notifications notifications, HostServices links,
                       BooleanSupplier busy, Consumer<Boolean> writing, Consumer<Path> activate, Runnable importPack,
-                      Supplier<VanillaInstaller> activeInstaller) {
+                      Supplier<VanillaInstaller> activeInstaller,
+                      javafx.beans.value.ObservableStringValue bedrockAddress, Runnable showBedrock) {
         this.options = options;
         this.folders = options.gameFolders;
         this.owner = owner;
@@ -51,6 +54,8 @@ final class GameFolderSidebar {
         this.activate = activate;
         this.importPack = importPack;
         this.activeInstaller = activeInstaller;
+        this.bedrockAddress = bedrockAddress;
+        this.showBedrock = showBedrock;
         rows.getStyleClass().addAll("pcl-sidebar", "game-folder-list");
         view.getStyleClass().addAll("section-scroll", "game-folder-sidebar");
         view.setFitToWidth(true);
@@ -72,6 +77,7 @@ final class GameFolderSidebar {
             rows.getChildren().add(row);
             row.toggle().setSelected(folder.path().equals(folders.active()));
         }
+        rows.getChildren().add(SidebarItem.folder("基岩版目录", bedrockAddress, group, showBedrock, null));
         rows.getChildren().add(heading("添加或导入"));
         if (!Files.isDirectory(folders.defaultRoot())) {
             addAction("新建 .minecraft 文件夹", "folder-create",

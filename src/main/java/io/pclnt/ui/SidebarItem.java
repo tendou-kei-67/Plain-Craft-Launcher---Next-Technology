@@ -78,13 +78,19 @@ final class SidebarItem extends StackPane {
     }
 
     static SidebarItem folder(String title, String path, ToggleGroup group, Runnable select, ContextMenu menu) {
+        return folder(title, new javafx.beans.property.SimpleStringProperty(path), group, select, menu);
+    }
+
+    static SidebarItem folder(String title, javafx.beans.value.ObservableStringValue path, ToggleGroup group,
+                              Runnable select, ContextMenu menu) {
         var button = pageButton(title, group, select);
-        var gear = iconButton("管理游戏文件夹", "instance-settings", 15, () -> {});
+        var gear = menu == null ? null : iconButton("管理游戏文件夹", "instance-settings", 15, () -> {});
         var row = new SidebarItem(button, null, 0, gear);
         row.getStyleClass().add("pcl-folder-item");
         var name = new Label(title);
         name.textFillProperty().bind(row.ink);
-        var info = new Label(path);
+        var info = new Label();
+        info.textProperty().bind(path);
         info.getStyleClass().add("pcl-folder-path");
         var labels = new VBox(2, name, info);
         labels.setAlignment(Pos.CENTER_LEFT);
@@ -92,10 +98,12 @@ final class SidebarItem extends StackPane {
         labels.maxWidthProperty().bind(button.widthProperty().subtract(44).map(width -> Math.max(0, width.doubleValue())));
         button.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         button.setGraphic(labels);
-        button.setAccessibleText(title + "，" + path);
-        button.setTooltip(new Tooltip(path));
+        button.accessibleTextProperty().bind(javafx.beans.binding.Bindings.concat(title, "，", path));
+        var tooltip = new Tooltip();
+        tooltip.textProperty().bind(path);
+        button.setTooltip(tooltip);
         button.setContextMenu(menu);
-        gear.setOnAction(event -> menu.show(gear, javafx.geometry.Side.BOTTOM, 0, 0));
+        if (gear != null) gear.setOnAction(event -> menu.show(gear, javafx.geometry.Side.BOTTOM, 0, 0));
         return row;
     }
 
@@ -220,27 +228,7 @@ final class SidebarItem extends StackPane {
                     new KeyValue(ink, over ? ICON_HOVER : ICON_IDLE, Interpolator.LINEAR)));
             color.play();
         });
-        var scale = new Timeline();
-        button.armedProperty().addListener((observable, old, armed) -> {
-            scale.stop();
-            var artwork = button.getGraphic();
-            double start = artwork.getScaleX();
-            boolean pointerLeft = !armed && button.isPressed() && !button.isHover();
-            var easing = armed ? UiMotion.OUT_STRONG : pointerLeft ? UiMotion.OUT_MIDDLE : new Interpolator() {
-                @Override protected double curve(double t) {
-                    // MyIconButton adds a +1.05 rebound and a -0.05 correction concurrently.
-                    return (1.05 - start) * UiMotion.BACK_WEAK.interpolate(0.0, 1.0, t)
-                            - .05 * UiMotion.OUT_STRONG.interpolate(0.0, 1.0, t);
-                }
-                @Override public double interpolate(double from, double to, double t) {
-                    return start + curve(t);
-                }
-            };
-            scale.getKeyFrames().setAll(new KeyFrame(Duration.millis(armed ? 400 : 250),
-                    new KeyValue(artwork.scaleXProperty(), armed ? .8 : 1, easing),
-                    new KeyValue(artwork.scaleYProperty(), armed ? .8 : 1, easing)));
-            scale.play();
-        });
+        UiMotion.installIconPress(button);
         return button;
     }
 

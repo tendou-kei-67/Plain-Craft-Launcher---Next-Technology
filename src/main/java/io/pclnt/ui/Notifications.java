@@ -81,6 +81,7 @@ final class Notifications {
         closeButton.setAccessibleText("关闭通知中心");
         closeButton.getStyleClass().add("notification-close");
         PclArtwork.setIcon(closeButton, "close", 13);
+        UiMotion.installIconPress(closeButton);
         closeButton.setOnAction(event -> setOpen(false));
 
         var title = LauncherController.label("通知中心", "notification-title");

@@ -29,6 +29,10 @@ public final class MicrosoftLogin {
             super(message);
         }
     }
+
+    public static final class ReauthenticationRequiredException extends IOException {
+        ReauthenticationRequiredException() { super("微软会话已失效，请重新登录。"); }
+    }
     private static final String OAUTH = "https://login.microsoftonline.com/consumers/oauth2/v2.0/";
     private static final String MINECRAFT = "https://api.minecraftservices.com/";
     private static final String SCOPE = "XboxLive.signin offline_access";
@@ -73,7 +77,7 @@ public final class MicrosoftLogin {
         private final String name, uuid, accessToken, refreshToken, xuid;
         private final Instant expires;
 
-        private Session(String name, String uuid, String accessToken, String refreshToken, String xuid, Instant expires) {
+        Session(String name, String uuid, String accessToken, String refreshToken, String xuid, Instant expires) {
             this.name = name;
             this.uuid = uuid;
             this.accessToken = accessToken;
@@ -85,7 +89,9 @@ public final class MicrosoftLogin {
         public String name() { return name; }
         public String uuid() { return uuid; }
         String accessToken() { return accessToken; }
+        String refreshToken() { return refreshToken; }
         String xuid() { return xuid; }
+        public boolean hasAccessToken() { return !accessToken.isBlank(); }
     }
 
     public Device begin() throws IOException, InterruptedException {
@@ -117,10 +123,20 @@ public final class MicrosoftLogin {
 
     public Session forLaunch(Session previous) throws IOException, InterruptedException {
         if (Instant.now().plusSeconds(60).isBefore(previous.expires)) return previous;
-        if (previous.refreshToken.isBlank()) throw new IOException("微软会话已过期，请重新登录");
-        var result = complete(form("token", Map.of("client_id", clientId, "scope", SCOPE,
-                "grant_type", "refresh_token", "refresh_token", previous.refreshToken)), previous.refreshToken);
-        if (!result.uuid.equalsIgnoreCase(previous.uuid)) throw new IOException("微软会话对应的角色已变更");
+        if (previous.refreshToken.isBlank()) throw new ReauthenticationRequiredException();
+        var response = sendForm("token", Map.of("client_id", clientId, "scope", SCOPE,
+                "grant_type", "refresh_token", "refresh_token", previous.refreshToken));
+        if (response.statusCode() != 200) {
+            if (response.statusCode() == 400 || response.statusCode() == 401) {
+                String error = VanillaInstaller.string(json(response), "error");
+                if (error.equals("invalid_grant") || error.equals("interaction_required")) {
+                    throw new ReauthenticationRequiredException();
+                }
+            }
+            throw new IOException("刷新微软会话失败（HTTP " + response.statusCode() + "）");
+        }
+        var result = complete(json(response), previous.refreshToken);
+        if (!result.uuid.equalsIgnoreCase(previous.uuid)) throw new ReauthenticationRequiredException();
         return result;
     }
 

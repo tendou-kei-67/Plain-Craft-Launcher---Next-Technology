@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import java.nio.file.FileStore;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
@@ -47,6 +48,19 @@ public final class VanillaInstaller {
     public record Instance(String id, Path directory) {}
 
     public record InstanceInfo(String gameVersion, String type, List<String> loaders) {}
+
+    public static final class InsufficientSpace extends IOException {
+        private InsufficientSpace(Path path, long required, long available) {
+            super("游戏文件所在磁盘空间不足。位置 " + path + "，至少需要 " + diskSize(required)
+                    + "，当前可用 " + diskSize(available) + "。");
+        }
+
+        private static String diskSize(long size) {
+            if (size < 1024) return size + " 字节";
+            if (size < 1024 * 1024) return String.format(Locale.ROOT, "%.1f KiB", size / 1024.0);
+            return String.format(Locale.ROOT, "%.1f MiB", size / (1024.0 * 1024));
+        }
+    }
 
     public InstanceInfo describe(Instance instance) throws IOException {
         var version = launchVersion(instance);
@@ -133,7 +147,7 @@ public final class VanillaInstaller {
                 addDownload(files, Download.of(nativeFile, libraryPath(nativeFile)));
             }
         }
-        var assetIndex = metadata.getAsJsonObject("assetIndex");
+        var assetIndex = assetIndex(metadata);
         if (assetIndex != null) {
             String id = fileName(string(assetIndex, "id"));
             var index = root.resolve("assets/indexes").resolve(id + ".json");
@@ -155,6 +169,34 @@ public final class VanillaInstaller {
             }
         }
         return List.copyOf(files.values());
+    }
+
+    static JsonObject assetIndex(JsonObject metadata) {
+        if (metadata.get("assetIndex") instanceof JsonObject index
+                && !string(index, "id").isBlank() && !string(index, "url").isBlank()) return index;
+        String id = metadata.get("assetIndex") instanceof JsonObject index ? string(index, "id") : "";
+        if (id.isBlank()) id = string(metadata, "assets");
+        if (id.isBlank() && (string(metadata, "type").startsWith("old_")
+                || string(metadata, "id").matches("1\\.[0-6](?:\\.[0-9]+)?(?:[-_].*)?"))) id = "legacy";
+        String hash;
+        int size;
+        switch (id) {
+            case "legacy" -> {
+                hash = "770572e819335b6c0a053f8378ad88eda189fc14";
+                size = 109634;
+            }
+            case "pre-1.6" -> {
+                hash = "3d8e55480977e32acd9844e545177e69a52f594b";
+                size = 74091;
+            }
+            default -> { return null; }
+        }
+        var fallback = new JsonObject();
+        fallback.addProperty("id", id);
+        fallback.addProperty("sha1", hash);
+        fallback.addProperty("size", size);
+        fallback.addProperty("url", "https://piston-meta.mojang.com/v1/packages/" + hash + "/" + id + ".json");
+        return fallback;
     }
 
     private static void addDownload(Map<Path, Download> files, Download file) {
@@ -254,6 +296,7 @@ public final class VanillaInstaller {
 
     private void fetchAll(List<Download> downloads, BiConsumer<Integer, Integer> progress)
             throws IOException, InterruptedException {
+        checkDownloadSpace(downloads);
         progress.accept(0, downloads.size());
         try (var workers = java.util.concurrent.Executors.newFixedThreadPool(8)) {
             var completions = new java.util.concurrent.ExecutorCompletionService<Void>(workers);
@@ -270,6 +313,7 @@ public final class VanillaInstaller {
                     progress.accept(completed, tasks.size());
                 }
             } catch (ExecutionException e) {
+                if (e.getCause() instanceof IOException failure) throw failure;
                 throw new IOException(e.getCause().getMessage(), e.getCause());
             } finally {
                 tasks.forEach(task -> task.cancel(true));
@@ -277,12 +321,57 @@ public final class VanillaInstaller {
         }
     }
 
+    private void checkDownloadSpace(List<Download> files) throws IOException, InterruptedException {
+        record Budget(Path location, long growth, long largestWrite) {}
+        var stores = new LinkedHashMap<Path, FileStore>();
+        var budgets = new LinkedHashMap<FileStore, Budget>();
+        for (var file : files) {
+            if (Thread.interrupted()) throw new InterruptedException();
+            if (file.size() <= 0 || file.uri().toString().isEmpty()) continue;
+            long existing = Files.isRegularFile(file.target()) ? Files.size(file.target()) : 0;
+            // Same-sized files may already be present. The downloader still verifies their hashes.
+            if (existing == file.size()) continue;
+            Path location = existingParent(file.target());
+            var store = stores.get(location);
+            if (store == null) {
+                store = Files.getFileStore(location);
+                stores.put(location, store);
+            }
+            var earlier = budgets.getOrDefault(store, new Budget(location, 0, 0));
+            budgets.put(store, new Budget(earlier.location(), earlier.growth() + file.size() - existing,
+                    Math.max(earlier.largestWrite(), file.size())));
+        }
+        for (var entry : budgets.entrySet()) {
+            var budget = entry.getValue();
+            requireSpace(entry.getKey(), budget.location(), Math.max(budget.growth(), budget.largestWrite()));
+        }
+    }
+
+    private static Path existingParent(Path file) throws IOException {
+        for (Path directory = file.toAbsolutePath().getParent(); directory != null; directory = directory.getParent()) {
+            if (Files.isDirectory(directory)) return directory;
+        }
+        throw new IOException("无法确定游戏文件的磁盘：" + file);
+    }
+
+    private static void checkWriteSpace(Path file, long required) throws IOException {
+        var location = existingParent(file);
+        requireSpace(Files.getFileStore(location), location, Math.max(1, required));
+    }
+
+    private static void requireSpace(FileStore store, Path location, long required) throws IOException {
+        long available = store.getUsableSpace();
+        if (available < required) throw new InsufficientSpace(location, required, available);
+    }
+
     static void publishVersion(Instance instance, JsonObject metadata) throws IOException {
         Path versionJson = versionJson(instance);
+        String json = metadata.toString();
+        checkWriteSpace(versionJson, json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
         Files.createDirectories(versionJson.getParent());
         Path pending = Files.createTempFile(versionJson.getParent(), "version-", ".part");
         try {
-            Files.writeString(pending, metadata.toString());
+            Files.writeString(pending, json);
             replace(pending, versionJson);
         } finally {
             Files.deleteIfExists(pending);
@@ -399,6 +488,7 @@ public final class VanillaInstaller {
         if (!"https".equalsIgnoreCase(file.uri().getScheme()) || file.uri().getHost() == null) {
             throw new IOException("下载地址必须使用 HTTPS");
         }
+        checkWriteSpace(file.target(), file.size());
         Files.createDirectories(file.target().getParent());
         Path pending = Files.createTempFile(file.target().getParent(), "download-", ".part");
         IOException last = null;

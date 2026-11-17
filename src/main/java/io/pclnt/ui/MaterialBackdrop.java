@@ -5,19 +5,24 @@ import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.scene.SnapshotParameters;
+import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.PixelFormat;
 import javafx.scene.image.WritableImage;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
+import javafx.scene.transform.NonInvertibleTransformException;
 import javafx.scene.transform.Scale;
 import javafx.util.Duration;
 
 /** Captures the launcher background once, so all cards can display the same blurred surface. */
 final class MaterialBackdrop {
-    final ReadOnlyObjectWrapper<WritableImage> image = new ReadOnlyObjectWrapper<>();
+    private record Frame(WritableImage image, double width, double height, double scale) {}
+
+    private final ReadOnlyObjectWrapper<Frame> frame = new ReadOnlyObjectWrapper<>();
     private final AppearanceOptions options;
     private final StackPane host;
     private final StackPane background;
@@ -27,9 +32,8 @@ final class MaterialBackdrop {
     private boolean videoPlaying;
     private long revision;
 
-    static void install(PclCard card) {
+    static void install(Pane card) {
         var view = new ImageView();
-        view.setManaged(false);
         view.setMouseTransparent(true);
         view.setOpacity(.42);
         view.setSmooth(true);
@@ -38,42 +42,52 @@ final class MaterialBackdrop {
         clip.heightProperty().bind(card.heightProperty());
         clip.setArcWidth(10);
         clip.setArcHeight(10);
-        view.setClip(clip);
+        var layer = new Group(view);
+        layer.setManaged(false);
+        layer.setMouseTransparent(true);
+        layer.setClip(clip);
         view.setVisible(false);
         view.setId("cardMaterial");
-        view.fitWidthProperty().bind(card.widthProperty());
-        view.fitHeightProperty().bind(card.heightProperty());
-        card.getChildren().addFirst(view);
-        var source = new javafx.beans.property.SimpleObjectProperty<MaterialBackdrop>();
+        card.getChildren().addFirst(layer);
+        var source = new javafx.beans.property.SimpleObjectProperty<Frame>();
+        var owner = new javafx.beans.property.SimpleObjectProperty<MaterialBackdrop>();
         Runnable position = () -> {
-            var backdrop = source.get();
-            var image = view.getImage();
-            if (image == null || backdrop == null || card.getScene() == null || backdrop.host.getWidth() < 1
-                    || backdrop.host.getHeight() < 1 || card.getWidth() < 1 || card.getHeight() < 1) {
+            var backdrop = owner.get();
+            if (source.get() == null || backdrop == null || card.getScene() == null
+                    || card.getWidth() < 1 || card.getHeight() < 1) {
                 view.setVisible(false);
                 return;
             }
-            var origin = backdrop.host.sceneToLocal(card.localToScene(0, 0));
-            double scaleX = image.getWidth() / backdrop.host.getWidth();
-            double scaleY = image.getHeight() / backdrop.host.getHeight();
-            view.setViewport(new javafx.geometry.Rectangle2D(origin.getX() * scaleX, origin.getY() * scaleY,
-                    card.getWidth() * scaleX, card.getHeight() * scaleY));
-            view.setVisible(true);
+            try {
+                // Map the shared surface into the card's coordinates before applying its rounded clip.
+                var transform = card.getLocalToSceneTransform().createInverse()
+                        .createConcatenation(backdrop.host.getLocalToSceneTransform());
+                view.getTransforms().setAll(transform);
+                view.setVisible(true);
+            } catch (NonInvertibleTransformException ignored) {
+                view.setVisible(false);
+            }
         };
         var relocate = (javafx.beans.InvalidationListener) ignored -> position.run();
         card.widthProperty().addListener(relocate);
         card.heightProperty().addListener(relocate);
         card.localToSceneTransformProperty().addListener(relocate);
-        view.imageProperty().addListener(relocate);
+        source.addListener((observable, old, next) -> {
+            view.setImage(next == null ? null : next.image());
+            // Snapshot dimensions round up to pixel boundaries. Keep that padding at the edge.
+            view.setFitWidth(next == null ? 0 : next.image().getWidth() / next.scale());
+            view.setFitHeight(next == null ? 0 : next.image().getHeight() / next.scale());
+            position.run();
+        });
         card.sceneProperty().addListener((observable, old, scene) -> {
-            view.imageProperty().unbind();
-            view.setImage(null);
+            source.unbind();
+            owner.set(null);
             source.set(null);
             if (scene != null) {
                 for (Parent parent = card.getParent(); parent != null; parent = parent.getParent()) {
                     if (parent.getProperties().get(MaterialBackdrop.class) instanceof MaterialBackdrop backdrop) {
-                        source.set(backdrop);
-                        view.imageProperty().bind(backdrop.image);
+                        owner.set(backdrop);
+                        source.bind(backdrop.frame);
                         break;
                     }
                 }
@@ -94,7 +108,10 @@ final class MaterialBackdrop {
         options.materialRadius.addListener(ignored -> update());
         options.materialSampling.addListener(ignored -> invalidate());
         options.materialMethod.addListener(ignored -> invalidate());
-        host.backgroundProperty().addListener(ignored -> invalidate());
+        host.backgroundProperty().addListener(ignored -> {
+            frame.set(null);
+            invalidate();
+        });
     }
 
     void setVideoPlaying(boolean value) {
@@ -103,6 +120,10 @@ final class MaterialBackdrop {
     }
 
     void invalidate() {
+        var previous = frame.get();
+        if (previous != null && (previous.width() != host.getWidth() || previous.height() != host.getHeight())) {
+            frame.set(null);
+        }
         revision++;
         if (queued) {
             pending = true;
@@ -122,7 +143,7 @@ final class MaterialBackdrop {
             invalidate();
         } else {
             revision++;
-            image.set(null);
+            frame.set(null);
         }
         if (active() && videoPlaying) {
             videoFrames.play();
@@ -148,13 +169,12 @@ final class MaterialBackdrop {
         double radius = options.materialRadius.get() * sample;
         boolean gaussian = options.materialMethod.get() == 0;
         var snapshot = new SnapshotParameters();
-        snapshot.setFill(Color.TRANSPARENT);
+        var fill = host.getBackground();
+        snapshot.setFill(fill == null || fill.getFills().isEmpty() ? Color.TRANSPARENT
+                : fill.getFills().getFirst().getFill());
         snapshot.setTransform(new Scale(sample, sample));
-        // Match the host's resolved CSS background, including its live theme and gradient.
-        background.setBackground(host.getBackground());
         snapshot.setViewport(new javafx.geometry.Rectangle2D(0, 0, width * sample, height * sample));
         background.snapshot(result -> {
-            background.setBackground(null);
             var sampled = result.getImage();
             int columns = (int) sampled.getWidth();
             int rows = (int) sampled.getHeight();
@@ -170,7 +190,7 @@ final class MaterialBackdrop {
                 try {
                     if (active() && host.getScene() != null && revision == capturedRevision) {
                         sampled.getPixelWriter().setPixels(0, 0, columns, rows, format, blur.getValue(), 0, columns);
-                        image.set(sampled);
+                        frame.set(new Frame(sampled, width, height, sample));
                     }
                 } finally {
                     finish();

@@ -23,7 +23,6 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.TextField;
-import javafx.scene.control.Tooltip;
 import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -54,7 +53,7 @@ final class InstanceSelectionPage {
     private final Notifications notifications;
     private final Parent owner;
     private final Runnable download;
-    private final Parent view;
+    private final javafx.scene.layout.BorderPane view = new javafx.scene.layout.BorderPane();
     private final VBox groups = new VBox(15);
     private final TextField filter = new TextField();
     private List<Entry> entries = List.of();
@@ -63,8 +62,8 @@ final class InstanceSelectionPage {
     InstanceSelectionPage(VanillaInstaller installer, AppearanceOptions options, Instance selected,
                           Consumer<Instance> select, Consumer<Instance> settings, Consumer<Instance> removed,
                           BooleanSupplier busy, Consumer<Boolean> writing, HostServices links,
-                          Notifications notifications, Parent owner, Runnable back, Runnable download, Runnable importPack,
-                          Function<Path, Instance> activateFolder, Supplier<VanillaInstaller> activeInstaller) {
+                          Notifications notifications, Parent owner, Runnable download, Runnable importPack,
+                          Function<Path, Instance> activateFolder, Supplier<VanillaInstaller> activeInstaller, TaskMonitor tasks) {
         this.installer = installer;
         this.options = options;
         this.selected = selected;
@@ -79,17 +78,18 @@ final class InstanceSelectionPage {
         this.download = download;
         filter.setPromptText("搜索版本");
         filter.getStyleClass().addAll("account-input", "help-search");
+        var javaList = content(filter, groups);
+        var bedrock = new BedrockDownloadPage(links, notifications, tasks);
         var navigation = new GameFolderSidebar(options, owner, notifications, links, busy, writing, path -> {
+            view.setCenter(javaList);
             var current = activateFolder.apply(path);
             this.installer = activeInstaller.get();
             this.selected = current;
             reload();
-        }, importPack, activeInstaller);
-        var returnButton = VanillaDownloadPage.button("返回启动", back);
-        var header = new HBox(10, returnButton, filter);
-        header.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(filter, Priority.ALWAYS);
-        view = section(navigation.view(), content(header, groups));
+        }, importPack, activeInstaller, bedrock.address(), () -> view.setCenter(bedrock.view()));
+        view.setCenter(javaList);
+        view.setLeft(navigation.view());
+        bedrock.probeAddress();
         filter.textProperty().addListener((observable, old, value) -> {
             if (loading == null) render();
         });
@@ -205,13 +205,8 @@ final class InstanceSelectionPage {
     }
 
     private static Button action(String text, String icon, Runnable run) {
-        var button = new Button();
+        var button = TaskMonitor.iconButton(text, icon, 14, run);
         button.getStyleClass().add("instance-row-action");
-        button.setAccessibleText(text);
-        button.setTooltip(new Tooltip(text));
-        PclArtwork.setIcon(button, icon, 14);
-        UiMotion.installPress(button);
-        button.setOnAction(event -> run.run());
         return button;
     }
 

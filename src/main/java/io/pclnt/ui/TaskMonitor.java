@@ -41,20 +41,19 @@ final class TaskMonitor {
     private final Label summary = label("", "task-summary");
     private final ProgressBar total = new ProgressBar(0);
     private final SimpleBooleanProperty busy = new SimpleBooleanProperty();
+    private final javafx.beans.property.DoubleProperty floatingProgress = new javafx.beans.property.SimpleDoubleProperty();
+    private Timeline floatingMotion;
     private final Timeline sampler;
     private final BorderPane view;
     private long sampledAt;
 
-    TaskMonitor(AppearanceOptions options, Runnable back) {
+    TaskMonitor(AppearanceOptions options) {
         this.options = options;
         var stats = new VBox(12, metric("总进度", percent), metric("下载速度", speed),
                 metric("磁盘使用量", disk), metric("剩余文件", remaining), metric("剩余线程", threads));
         stats.getStyleClass().add("task-stats");
         stats.setAlignment(Pos.CENTER);
-        var heading = new HBox(9, iconButton("返回下载", "install-back", 14, back),
-                label("任务管理", "card-title"));
-        heading.setAlignment(Pos.CENTER_LEFT);
-        var right = new BorderPane(content(heading, cards));
+        var right = new BorderPane(content(cards));
         total.setMaxWidth(Double.MAX_VALUE);
         total.setAccessibleText("总进度");
         var footer = new VBox(5, summary, total);
@@ -72,8 +71,30 @@ final class TaskMonitor {
     Node view() { return view; }
 
     Button floating(StackPane surface, Runnable open, SimpleBooleanProperty onTaskPage) {
-        var button = iconButton("任务管理", "pcl2.FormMain.BtnExtraDownload", 25, open);
+        var button = iconButton("任务管理", "pcl2.FormMain.BtnExtraDownload", 16, open);
         button.getStyleClass().add("task-float");
+        var fill = new javafx.scene.shape.Rectangle(40, 40, javafx.scene.paint.Color.rgb(255, 255, 255, .184));
+        fill.yProperty().bind(floatingProgress.negate().multiply(40).add(40));
+        fill.heightProperty().bind(floatingProgress.multiply(40));
+        var graphic = new javafx.scene.layout.Pane(fill);
+        graphic.setMinSize(40, 40);
+        graphic.setMaxSize(40, 40);
+        graphic.setClip(new javafx.scene.shape.Circle(20, 20, 20));
+        var face = new StackPane(graphic, button.getGraphic());
+        face.setMouseTransparent(true);
+        button.setGraphic(face);
+        button.backgroundProperty().addListener((observable, old, next) -> {
+            if (next != null) face.setBackground(next);
+        });
+        face.scaleYProperty().bind(face.scaleXProperty());
+        var press = new javafx.beans.property.SimpleObjectProperty<Timeline>();
+        button.armedProperty().addListener((observable, old, armed) -> {
+            if (press.get() != null) press.get().stop();
+            var motion = UiMotion.track(face.scaleXProperty(), armed ? .85 : 1, 0,
+                    armed ? 120 : button.isHover() ? 300 : 500, armed ? UiMotion.OUT_MIDDLE : UiMotion.BACK_WEAK);
+            press.set(motion);
+            motion.play();
+        });
         button.setVisible(false);
         button.setManaged(false);
         button.setScaleX(0);
@@ -138,6 +159,13 @@ final class TaskMonitor {
         refresh();
     }
 
+    private void remove(Job job) {
+        if (job.active() || !jobs.remove(job)) return;
+        cards.getChildren().remove(job.card);
+        if (jobs.isEmpty()) cards.getChildren().setAll(PclCard.fixed("暂无任务"));
+        refresh();
+    }
+
     private void refresh() {
         long now = System.nanoTime();
         double elapsed = (now - sampledAt) / 1e9;
@@ -176,6 +204,10 @@ final class TaskMonitor {
         String displayPercent = String.format(Locale.ROOT, "%.2f", progress * 100);
         percent.setText(displayPercent + " %");
         total.setProgress(active > 0 && known == 0 ? ProgressBar.INDETERMINATE_PROGRESS : progress);
+        double target = active == 0 ? 0 : progress;
+        if (floatingMotion != null) floatingMotion.stop();
+        floatingMotion = UiMotion.track(floatingProgress, target, 0, 260, UiMotion.OUT_MIDDLE);
+        floatingMotion.play();
         summary.setText("总进度：" + displayPercent + "%  当前文件：" + (current.isBlank() ? "—" : current));
         speed.setText(rate(in, options.downloadSpeedUnit.get()));
         disk.setText("读取 " + rate(reads, options.diskSpeedUnit.get()) + "\n写入 " + rate(writes, options.diskSpeedUnit.get()));
@@ -200,7 +232,7 @@ final class TaskMonitor {
         button.setOnAction(event -> action.run());
         button.getStyleClass().add("pcl-action-icon");
         PclArtwork.setIcon(button, icon, size, size);
-        UiMotion.installPress(button);
+        UiMotion.installIconPress(button);
         return button;
     }
 
@@ -217,7 +249,7 @@ final class TaskMonitor {
         return String.format(Locale.ROOT, scale == 0 ? "%.0f %s" : "%.2f %s", value, units.get(scale));
     }
 
-    private static final class Job {
+    private final class Job {
         final Task<?> task;
         final TaskIo.Counter io = new TaskIo.Counter();
         final String initialFile;
@@ -246,7 +278,15 @@ final class TaskMonitor {
             line.setAlignment(Pos.CENTER_LEFT);
             state.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(state, Priority.ALWAYS);
-            if (canCancel) line.getChildren().add(cancel);
+            var showCancel = javafx.beans.binding.Bindings.createBooleanBinding(
+                    () -> canCancel && active(), task.stateProperty());
+            cancel.visibleProperty().bind(showCancel);
+            cancel.managedProperty().bind(showCancel);
+            var delete = iconButton("删除任务记录", "lucide/trash-2", 12, () -> remove(this));
+            var terminal = javafx.beans.binding.Bindings.createBooleanBinding(() -> !active(), task.stateProperty());
+            delete.visibleProperty().bind(terminal);
+            delete.managedProperty().bind(terminal);
+            line.getChildren().addAll(cancel, delete);
             card = PclCard.fixed(title, line);
         }
 

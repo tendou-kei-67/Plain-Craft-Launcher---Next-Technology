@@ -1,8 +1,12 @@
 package io.pclnt.ui;
 
 import javafx.animation.AnimationTimer;
+import javafx.animation.Interpolator;
+import javafx.animation.Timeline;
 import javafx.scene.Node;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Skin;
+import javafx.scene.control.skin.ScrollPaneSkin;
 import javafx.scene.input.ScrollEvent;
 
 /** Scrolls in viewport pixels with an underdamped spring instead of a duration. */
@@ -19,6 +23,8 @@ final class SpringScrollPane extends ScrollPane {
 
     SpringScrollPane(Node content) {
         super(content);
+        getStyleClass().add("pcl-scroll");
+        setSnapToPixel(false);
         setPannable(false);
         addEventFilter(ScrollEvent.ANY, this::onScroll);
         vvalueProperty().addListener(observable -> {
@@ -31,6 +37,52 @@ final class SpringScrollPane extends ScrollPane {
                 stop();
             }
         });
+    }
+
+    @Override protected Skin<?> createDefaultSkin() {
+        return new ScrollPaneSkin(this) {
+            private Timeline barMotion;
+
+            {
+                var bar = getVerticalScrollBar();
+                bar.setMinWidth(0);
+                // ScrollPaneSkin substitutes a 12px gutter when its measured width is exactly zero.
+                bar.setPrefWidth(.001);
+                bar.setOpacity(.5);
+                Runnable fade = () -> {
+                    if (barMotion != null) barMotion.stop();
+                    double opacity;
+                    int duration;
+                    if (!bar.isVisible()) {
+                        opacity = 0;
+                        duration = 20;
+                    } else if (bar.isPressed()) {
+                        opacity = 1;
+                        duration = 50;
+                    } else if (bar.isHover()) {
+                        opacity = .9;
+                        duration = 130;
+                    } else {
+                        opacity = .5;
+                        duration = 180;
+                    }
+                    barMotion = UiMotion.track(bar.opacityProperty(), opacity, 0, duration, Interpolator.LINEAR);
+                    barMotion.play();
+                };
+                bar.visibleProperty().addListener(ignored -> fade.run());
+                bar.hoverProperty().addListener(ignored -> fade.run());
+                bar.pressedProperty().addListener(ignored -> fade.run());
+            }
+
+            @Override protected void layoutChildren(double x, double y, double width, double height) {
+                var bar = getVerticalScrollBar();
+                super.layoutChildren(x, y, width, height);
+                if (bar.isVisible()) {
+                    bar.resizeRelocate(x + width - 8, bar.getLayoutY(), 8, bar.getHeight());
+                    bar.toFront();
+                }
+            }
+        };
     }
 
     private void onScroll(ScrollEvent event) {
